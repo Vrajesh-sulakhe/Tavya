@@ -1,0 +1,16 @@
+{
+  "name": "Tavya — Elderly Care & Medication Companion",
+  "short_name": "Tavya",
+  "description": "Dignified daily medication companion for seniors and calm, proactive oversight for family caregivers.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FDFBF7",
+  "theme_color": "#0F6B54",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

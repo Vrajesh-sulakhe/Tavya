@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+:root {
+  --bg-canvas: #fdfbf7;
+  --bg-bezel: rgba(242, 237, 227, 0.82);
+  --bg-surface: #ffffff;
+  --ink-primary: #141d19;
+  --ink-secondary: #46534c;
+  --ink-muted: #617068;
+  --accent-primary: #0f6b54;
+  --accent-hover: #0b5341;
+  --accent-soft: #e6f3ee;
+  --warning-ink: #92400e;
+  --warning-bg: #fef3c7;
+  --critical-ink: #b42318;
+  --critical-bg: #fee4e2;
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+html {
+  box-sizing: border-box;
+  background-color: var(--bg-canvas);
+  color: var(--ink-primary);
+  scroll-behavior: smooth;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: inherit;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  overflow-x: clip;
+  background-color: var(--bg-canvas);
+  background-image:
+    radial-gradient(circle at 12% 8%, rgba(15, 107, 84, 0.05), transparent 42%),
+    radial-gradient(circle at 88% 14%, rgba(180, 83, 9, 0.04), transparent 38%);
+  color: var(--ink-primary);
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+html[data-text-scale="xl"] {
+  font-size: 18px;
+}
+
+.font-display {
+  font-family: var(--font-display), Georgia, serif;
+}
+
+.font-mono-num {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0.75rem;
+  z-index: 60;
+  border-radius: 9999px;
+  background: var(--accent-primary);
+  color: #ffffff;
+  padding: 0.75rem 1.25rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  left: 1rem;
+  outline: 3px solid #141d19;
+  outline-offset: 2px;
+}
+
+:focus-visible {
+  outline: 3px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.ease-tavya {
+  transition-timing-function: var(--ease-spring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+}
