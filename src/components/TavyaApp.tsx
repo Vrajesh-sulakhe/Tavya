@@ -2,34 +2,22 @@
 
 import { useEffect, useRef, useState } from "react";
 import type {
-  CareNoteCategory,
   DashboardPayload,
-  DoseSlot,
-  DoseStatus,
-  MoodState,
-  ParsedPrescriptionItem,
-  PatientProfile,
-  PrescriptionAnalysisResult,
   SessionInfo,
-  SharingConsent,
   TavyaStoreData,
 } from "@/domain/types";
-import type { NewMedicationPayload } from "./AddMedicationModal";
+import { requestJson } from "@/lib/client-api";
+import { buildCareCircleActions } from "@/lib/useCareCircleActions";
 import { AuthGate, type AuthStatusSnapshot } from "./AuthGate";
-import type {
-  CreateAppointmentInput,
-  CreateMemberInput,
-} from "./CareCirclePanels";
 import { CaregiverView } from "./CaregiverView";
 import { Navbar, type AppMode, type TextScale } from "./Navbar";
-import type { PrescriptionImageInput } from "./PrescriptionAnalyzer";
 import { SeniorView } from "./SeniorView";
 import { SosModal } from "./SosModal";
 
 const STORAGE_KEY = "tavya:store:v2";
 
-function toStorePayload(dashboard: DashboardPayload): TavyaStoreData {
-  return {
+function saveToBrowserStorage(dashboard: DashboardPayload): void {
+  const payload: TavyaStoreData = {
     profile: dashboard.profile,
     medications: dashboard.medications,
     doseLogs: dashboard.doseLogs,
@@ -39,14 +27,8 @@ function toStorePayload(dashboard: DashboardPayload): TavyaStoreData {
     appointments: dashboard.appointments ?? [],
     consent: dashboard.consent,
   };
-}
-
-function saveToBrowserStorage(dashboard: DashboardPayload): void {
   try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(toStorePayload(dashboard))
-    );
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch {
     // Ignore storage quota or private browsing errors
   }
@@ -65,67 +47,62 @@ export function TavyaApp({
 }: TavyaAppProps) {
   const [session, setSession] = useState<SessionInfo | null>(initialSession);
   const [data, setData] = useState<DashboardPayload | null>(initialData);
-  const [authStatus, setAuthStatus] =
-    useState<AuthStatusSnapshot>(initialAuthStatus);
+  const [authStatus, setAuthStatus] = useState(initialAuthStatus);
   const [mode, setMode] = useState<AppMode>(
     initialSession?.role === "senior" ? "senior" : "caregiver"
   );
   const [textScale, setTextScale] = useState<TextScale>("standard");
   const [sosOpen, setSosOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
-  const hasLocalMutationRef = useRef(false);
+  const syncedMemberIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.textScale = textScale;
   }, [textScale]);
 
-  // Restore browser-saved data only when ephemeral local storage is active for a caretaker session.
   useEffect(() => {
-    if (!session || session.role !== "caretaker" || !data) return;
+    if (!session) {
+      syncedMemberIdRef.current = null;
+      return;
+    }
+    if (session.role !== "caretaker" || !data) return;
     if (data.persistence !== "ephemeral") return;
+    if (syncedMemberIdRef.current === session.memberId) return;
+    syncedMemberIdRef.current = session.memberId;
 
     let active = true;
-    async function syncSavedState() {
+    const baselineData = data;
+    void (async () => {
       try {
         const raw = window.localStorage.getItem(STORAGE_KEY);
         if (!raw) return;
-        const parsed = JSON.parse(raw) as TavyaStoreData;
-        const res = await fetch("/api/dashboard", {
+        const synced = await requestJson<DashboardPayload>("/api/dashboard", {
           method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(parsed),
+          body: JSON.parse(raw) as TavyaStoreData,
         });
-        if (res.ok && active && !hasLocalMutationRef.current) {
-          const synced = (await res.json()) as DashboardPayload;
-          setData(synced);
+        if (active) {
+          setData((current) => (current === baselineData ? synced : current));
         }
       } catch {
-        // Ignore malformed local storage
+        // Ignore malformed local storage or offline state
       }
-    }
-    void syncSavedState();
+    })();
     return () => {
       active = false;
     };
-    // Only evaluate once per authenticated caretaker session id
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.memberId]);
+  }, [session, data]);
 
-  // Proactive background reminder check every 5 minutes while Senior/Caretaker is active.
   useEffect(() => {
     if (!session || (session.role !== "caretaker" && session.role !== "senior")) {
       return;
     }
-
     let cancelled = false;
     async function runSweep() {
       try {
-        const res = await fetch("/api/reminders/run", { method: "POST" });
-        if (!res.ok || cancelled) return;
-        const json = (await res.json()) as {
+        const json = await requestJson<{
           processedCount?: number;
           dashboard?: DashboardPayload;
-        };
+        }>("/api/reminders/run", { method: "POST" });
         if (json.dashboard && (json.processedCount ?? 0) > 0 && !cancelled) {
           setData(json.dashboard);
         }
@@ -133,12 +110,8 @@ export function TavyaApp({
         // Silent retry on next interval
       }
     }
-
     void runSweep();
-    const timer = window.setInterval(() => {
-      void runSweep();
-    }, 5 * 60_000);
-
+    const timer = window.setInterval(() => void runSweep(), 5 * 60_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -146,7 +119,6 @@ export function TavyaApp({
   }, [session]);
 
   function applyDashboardUpdate(next: DashboardPayload, message: string) {
-    hasLocalMutationRef.current = true;
     setData(next);
     if (next.viewerRole === "caretaker" && next.persistence === "ephemeral") {
       saveToBrowserStorage(next);
@@ -154,19 +126,14 @@ export function TavyaApp({
     setAnnouncement(message);
   }
 
-  function handleUnauthorized(status: number): boolean {
-    if (status === 401) {
-      setSession(null);
-      setData(null);
-      return true;
-    }
-    return false;
+  function clearAuthenticatedState() {
+    setSession(null);
+    setData(null);
   }
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    setSession(null);
-    setData(null);
+    await requestJson("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    clearAuthenticatedState();
     setSosOpen(false);
     setAnnouncement("Signed out of Care Circle.");
   }
@@ -177,353 +144,32 @@ export function TavyaApp({
         authStatus={authStatus}
         textScale={textScale}
         onToggleTextScale={() =>
-          setTextScale((prev) => (prev === "standard" ? "xl" : "standard"))
+          setTextScale((p) => (p === "standard" ? "xl" : "standard"))
         }
         onDemoSeeded={() => setAuthStatus({ configured: true, isDemo: true })}
         onAuthenticated={({ session: nextSession, dashboard }) => {
-          hasLocalMutationRef.current = false;
           setSession(nextSession);
           setData(dashboard);
           setMode(nextSession.role === "senior" ? "senior" : "caregiver");
           setAuthStatus((prev) => ({ ...prev, configured: true }));
-          setAnnouncement(
-            `Signed in as ${nextSession.name} (${nextSession.role}).`
-          );
+          setAnnouncement(`Signed in as ${nextSession.name} (${nextSession.role}).`);
         }}
       />
     );
   }
 
   const activeData = data;
-  const activeMode: AppMode =
-    activeData.viewerRole === "senior" ? "senior" : mode;
+  const activeMode: AppMode = activeData.viewerRole === "senior" ? "senior" : mode;
+  const actions = buildCareCircleActions({
+    getTodayKey: () => activeData.todayKey,
+    applyDashboardUpdate,
+    onUnauthorized: clearAuthenticatedState,
+    onDemoReset: () => setAuthStatus({ configured: true, isDemo: true }),
+  });
 
-  async function handleDoseAction(
-    medicationId: string,
-    slot: DoseSlot,
-    status: DoseStatus
-  ) {
-    const res = await fetch("/api/doses", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        medicationId,
-        slot,
-        status,
-        dateKey: activeData.todayKey,
-      }),
-    });
-    if (handleUnauthorized(res.status) || !res.ok) return;
-    const updated = (await res.json()) as DashboardPayload;
-    const med = updated.medications.find((m) => m.id === medicationId);
-    applyDashboardUpdate(
-      updated,
-      `${med?.name ?? "Medication"} ${slot} dose marked ${status}.`
-    );
-  }
-
-  async function handleLogVitals(payload: {
-    mood: MoodState;
-    systolic?: number;
-    diastolic?: number;
-    bloodSugarMgDl?: number;
-    note?: string;
-  }) {
-    const res = await fetch("/api/vitals", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (handleUnauthorized(res.status) || !res.ok) return;
-    const updated = (await res.json()) as DashboardPayload;
-    applyDashboardUpdate(updated, `Wellness check-in (${payload.mood}) shared.`);
-  }
-
-  async function handleUpdateConsent(next: Partial<SharingConsent>) {
-    const res = await fetch("/api/consent", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(next),
-    });
-    if (handleUnauthorized(res.status) || !res.ok) return;
-    const json = (await res.json()) as { dashboard: DashboardPayload };
-    applyDashboardUpdate(json.dashboard, "Updated privacy & sharing preferences.");
-  }
-
-  async function handleCreateMedication(payload: NewMedicationPayload) {
-    const res = await fetch("/api/medications", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (handleUnauthorized(res.status)) return;
-    if (!res.ok) {
-      const err = (await res.json()) as { error?: string };
-      throw new Error(err.error ?? "Failed to create medication");
-    }
-    const json = (await res.json()) as { dashboard: DashboardPayload };
-    applyDashboardUpdate(json.dashboard, `Added ${payload.name} to schedule.`);
-  }
-
-  async function handleUpdateMedication(
-    id: string,
-    payload: Partial<NewMedicationPayload> & { active?: boolean }
-  ) {
-    const res = await fetch(`/api/medications/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (handleUnauthorized(res.status)) return;
-    if (!res.ok) {
-      const err = (await res.json()) as { error?: string };
-      throw new Error(err.error ?? "Failed to update medication");
-    }
-    const updated = (await res.json()) as DashboardPayload;
-    applyDashboardUpdate(updated, "Medication updated.");
-  }
-
-  async function handleDeleteMedication(id: string) {
-    const res = await fetch(`/api/medications/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    });
-    if (handleUnauthorized(res.status) || !res.ok) return;
-    const updated = (await res.json()) as DashboardPayload;
-    applyDashboardUpdate(updated, "Medication removed from schedule.");
-  }
-
-  async function handleToggleMedicationActive(id: string, active: boolean) {
-    await handleUpdateMedication(id, { active });
-  }
-
-  async function handleUpdateProfile(profile: PatientProfile) {
-    const res = await fetch("/api/profile", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(profile),
-    });
-    if (handleUnauthorized(res.status)) return;
-    if (!res.ok) {
-      const err = (await res.json()) as { error?: string };
-      throw new Error(err.error ?? "Failed to update profile");
-    }
-    const updated = (await res.json()) as DashboardPayload;
-    applyDashboardUpdate(updated, `Updated care profile for ${profile.name}.`);
-  }
-
-  async function handleAnalyzePrescription(
-    text: string,
-    image?: PrescriptionImageInput
-  ): Promise<PrescriptionAnalysisResult> {
-    const res = await fetch("/api/ai/analyze-prescription", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        text,
-        imageBase64: image?.base64,
-        imageMimeType: image?.mimeType,
-      }),
-    });
-    if (handleUnauthorized(res.status)) {
-      throw new Error("Session expired. Please unlock with your passcode.");
-    }
-    if (!res.ok) {
-      const err = (await res.json()) as { error?: string };
-      throw new Error(err.error ?? "Prescription analysis failed");
-    }
-    return (await res.json()) as PrescriptionAnalysisResult;
-  }
-
-  async function handleCreateNote(payload: {
-    category: CareNoteCategory;
-    text: string;
-    scheduledDate?: string;
-  }) {
-    const res = await fetch("/api/notes", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (handleUnauthorized(res.status)) return;
-    if (!res.ok) {
-      const err = (await res.json()) as { error?: string };
-      throw new Error(err.error ?? "Failed to save care note");
-    }
-    const updated = (await res.json()) as DashboardPayload;
-    applyDashboardUpdate(updated, "Saved care note.");
-  }
-
-  async function handleDeleteNote(id: string) {
-    const res = await fetch(`/api/notes?id=${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    });
-    if (handleUnauthorized(res.status) || !res.ok) return;
-    const updated = (await res.json()) as DashboardPayload;
-    applyDashboardUpdate(updated, "Removed care note.");
-  }
-
-  async function handleCreateAppointment(payload: CreateAppointmentInput) {
-    const res = await fetch("/api/appointments", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (handleUnauthorized(res.status)) return;
-    if (!res.ok) {
-      const err = (await res.json()) as {
-        error?: string;
-        issues?: Array<{ message: string }>;
-      };
-      throw new Error(
-        err.issues?.[0]?.message ?? err.error ?? "Failed to schedule visit"
-      );
-    }
-    const json = (await res.json()) as { dashboard: DashboardPayload };
-    applyDashboardUpdate(json.dashboard, `Scheduled ${payload.title}.`);
-  }
-
-  async function handleDeleteAppointment(id: string) {
-    const res = await fetch(`/api/appointments/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    });
-    if (handleUnauthorized(res.status) || !res.ok) return;
-    const json = (await res.json()) as { dashboard: DashboardPayload };
-    applyDashboardUpdate(json.dashboard, "Removed scheduled appointment.");
-  }
-
-  async function handleAddMember(payload: CreateMemberInput) {
-    const res = await fetch("/api/circle/members", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (handleUnauthorized(res.status)) return;
-    if (!res.ok) {
-      const err = (await res.json()) as {
-        error?: string;
-        issues?: Array<{ message: string }>;
-      };
-      throw new Error(
-        err.issues?.[0]?.message ?? err.error ?? "Failed to add circle member"
-      );
-    }
-    const json = (await res.json()) as { dashboard: DashboardPayload };
-    applyDashboardUpdate(
-      json.dashboard,
-      `Added ${payload.name} (${payload.role}) to Care Circle.`
-    );
-  }
-
-  async function handleRemoveMember(id: string) {
-    const res = await fetch("/api/circle/members", {
-      method: "DELETE",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id }),
-    });
-    if (handleUnauthorized(res.status) || !res.ok) return;
-    const json = (await res.json()) as { dashboard: DashboardPayload };
-    applyDashboardUpdate(json.dashboard, "Removed member from Care Circle.");
-  }
-
-  async function handleRunReminders(): Promise<string> {
-    const res = await fetch("/api/reminders/run", { method: "POST" });
-    if (handleUnauthorized(res.status)) {
-      return "Session expired. Please sign in again.";
-    }
-    if (!res.ok) {
-      return "Unable to check reminders right now.";
-    }
-    const json = (await res.json()) as {
-      processedCount: number;
-      sentCount: number;
-      previewCount: number;
-      dashboard?: DashboardPayload;
-    };
-    if (json.dashboard) {
-      applyDashboardUpdate(
-        json.dashboard,
-        json.processedCount > 0
-          ? `Processed ${json.processedCount} due reminder(s).`
-          : "All reminder windows already up to date."
-      );
-    }
-    if (json.processedCount === 0) {
-      return "All current dose slots and upcoming appointments have already been notified.";
-    }
-    return `Processed ${json.processedCount} reminder(s): ${json.sentCount} sent, ${json.previewCount} recorded in preview outbox.`;
-  }
-
-  async function handleTriggerSos(
-    channel: "call" | "whatsapp" | "sms" | "card" = "card"
-  ) {
-    const res = await fetch("/api/sos", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ channel }),
-    });
-    if (handleUnauthorized(res.status) || !res.ok) return;
-    const updated = (await res.json()) as DashboardPayload;
-    applyDashboardUpdate(updated, "Emergency SOS alert logged for caregiver.");
-  }
-
-  async function handleAddParsedItems(items: ParsedPrescriptionItem[]) {
-    let latest = activeData;
-    let addedCount = 0;
-    for (const item of items) {
-      const res = await fetch("/api/medications", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name: item.name,
-          dosage: item.dosage,
-          instructions: item.plainInstruction,
-          purpose: item.purpose,
-          slots: item.slots,
-          mealTiming: item.mealTiming,
-          appearance: "sage_oval",
-          pillsRemaining: 30,
-          refillThresholdDays: 5,
-        }),
-      });
-      if (handleUnauthorized(res.status)) return;
-      if (res.ok) {
-        const json = (await res.json()) as { dashboard: DashboardPayload };
-        latest = json.dashboard;
-        addedCount += 1;
-      }
-    }
-    if (addedCount > 0) {
-      applyDashboardUpdate(
-        latest,
-        `Added ${addedCount} medicine${addedCount === 1 ? "" : "s"} from prescription.`
-      );
-    }
-  }
-
-  async function handleResetDemo() {
-    const res = await fetch("/api/dashboard", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "reset" }),
-    });
-    if (handleUnauthorized(res.status) || !res.ok) return;
-    const updated = (await res.json()) as DashboardPayload;
-    setAuthStatus({ configured: true, isDemo: true });
-    applyDashboardUpdate(updated, "Loaded sample care schedule.");
-  }
-
-  async function handleClearSchedule() {
-    const res = await fetch("/api/dashboard", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "clear" }),
-    });
-    if (handleUnauthorized(res.status) || !res.ok) return;
-    const updated = (await res.json()) as DashboardPayload;
-    applyDashboardUpdate(
-      updated,
-      "Cleared medication schedule for fresh custom setup."
-    );
+  function handleOpenSos() {
+    setSosOpen(true);
+    void actions.handleTriggerSos("card");
   }
 
   return (
@@ -533,12 +179,9 @@ export function TavyaApp({
         onModeChange={setMode}
         textScale={textScale}
         onToggleTextScale={() =>
-          setTextScale((prev) => (prev === "standard" ? "xl" : "standard"))
+          setTextScale((p) => (p === "standard" ? "xl" : "standard"))
         }
-        onOpenSos={() => {
-          setSosOpen(true);
-          void handleTriggerSos("card");
-        }}
+        onOpenSos={handleOpenSos}
         patientName={
           activeData.profile.name.trim().toLowerCase() === "your loved one"
             ? "Personalized Care"
@@ -558,40 +201,38 @@ export function TavyaApp({
           <SeniorView
             data={activeData}
             textScale={textScale}
-            onDoseAction={handleDoseAction}
-            onLogVitals={handleLogVitals}
+            onDoseAction={actions.handleDoseAction}
+            onLogVitals={actions.handleLogVitals}
             onUpdateConsent={
-              activeData.viewerRole === "senior" ||
-              activeData.viewerRole === "caretaker"
-                ? handleUpdateConsent
+              activeData.viewerRole === "senior" || activeData.viewerRole === "caretaker"
+                ? actions.handleUpdateConsent
                 : undefined
             }
             onOpenCaregiver={() => setMode("caregiver")}
-            onOpenSos={() => {
-              setSosOpen(true);
-              void handleTriggerSos("card");
-            }}
+            onOpenSos={handleOpenSos}
           />
         ) : (
           <CaregiverView
             data={activeData}
-            onDoseAction={handleDoseAction}
-            onCreateMedication={handleCreateMedication}
-            onUpdateMedication={handleUpdateMedication}
-            onDeleteMedication={handleDeleteMedication}
-            onToggleMedicationActive={handleToggleMedicationActive}
-            onUpdateProfile={handleUpdateProfile}
-            onAnalyzePrescription={handleAnalyzePrescription}
-            onAddParsedItems={handleAddParsedItems}
-            onCreateNote={handleCreateNote}
-            onDeleteNote={handleDeleteNote}
-            onCreateAppointment={handleCreateAppointment}
-            onDeleteAppointment={handleDeleteAppointment}
-            onAddMember={handleAddMember}
-            onRemoveMember={handleRemoveMember}
-            onRunReminders={handleRunReminders}
-            onResetDemo={handleResetDemo}
-            onClearSchedule={handleClearSchedule}
+            onDoseAction={actions.handleDoseAction}
+            onCreateMedication={actions.handleCreateMedication}
+            onUpdateMedication={actions.handleUpdateMedication}
+            onDeleteMedication={actions.handleDeleteMedication}
+            onToggleMedicationActive={(id, active) =>
+              actions.handleUpdateMedication(id, { active })
+            }
+            onUpdateProfile={actions.handleUpdateProfile}
+            onAnalyzePrescription={actions.handleAnalyzePrescription}
+            onAddParsedItems={actions.handleAddParsedItems}
+            onCreateNote={actions.handleCreateNote}
+            onDeleteNote={actions.handleDeleteNote}
+            onCreateAppointment={actions.handleCreateAppointment}
+            onDeleteAppointment={actions.handleDeleteAppointment}
+            onAddMember={actions.handleAddMember}
+            onRemoveMember={actions.handleRemoveMember}
+            onRunReminders={actions.handleRunReminders}
+            onResetDemo={actions.handleResetDemo}
+            onClearSchedule={actions.handleClearSchedule}
           />
         )}
       </main>
@@ -606,7 +247,7 @@ export function TavyaApp({
         onClose={() => setSosOpen(false)}
         profile={activeData.profile}
         medications={activeData.medications}
-        onTriggerSos={handleTriggerSos}
+        onTriggerSos={actions.handleTriggerSos}
       />
     </div>
   );

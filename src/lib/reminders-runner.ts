@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { randomUUID } from "node:crypto";
 import { computeDueReminders } from "@/domain/reminders";
 import type { EmailLogEntry } from "@/domain/types";
 import { sendReminderEmail } from "./email";

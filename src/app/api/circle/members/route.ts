@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { authenticateMember, createMemberRecord } from "@/domain/auth";
 import { createMemberSchema, removeMemberSchema } from "@/domain/schemas";

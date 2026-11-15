@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createAppointmentSchema } from "@/domain/schemas";
 import type { Appointment } from "@/domain/types";

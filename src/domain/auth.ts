@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "crypto";
+import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { CareCircle, CircleMember, CircleRole, PublicMember, SessionInfo } from "./types";
 
 export const SESSION_COOKIE_NAME = "tavya_session";
