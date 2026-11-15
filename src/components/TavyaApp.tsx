@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type {
+  CareNoteCategory,
   DashboardPayload,
   DoseSlot,
   DoseStatus,
@@ -11,6 +12,7 @@ import type {
   PrescriptionAnalysisResult,
   TavyaStoreData,
 } from "@/domain/types";
+import type { PrescriptionImageInput } from "./PrescriptionAnalyzer";
 import type { NewMedicationPayload } from "./AddMedicationModal";
 import { CaregiverView } from "./CaregiverView";
 import { Navbar, type AppMode, type TextScale } from "./Navbar";
@@ -26,6 +28,7 @@ function toStorePayload(dashboard: DashboardPayload): TavyaStoreData {
     doseLogs: dashboard.doseLogs,
     vitalsLogs: dashboard.vitalsLogs,
     alerts: dashboard.alerts,
+    careNotes: dashboard.careNotes ?? [],
   };
 }
 
@@ -188,18 +191,63 @@ export function TavyaApp({ initialData }: TavyaAppProps) {
   }
 
   async function handleAnalyzePrescription(
-    text: string
+    text: string,
+    image?: PrescriptionImageInput
   ): Promise<PrescriptionAnalysisResult> {
     const res = await fetch("/api/ai/analyze-prescription", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({
+        text,
+        imageBase64: image?.base64,
+        imageMimeType: image?.mimeType,
+      }),
     });
     if (!res.ok) {
       const err = (await res.json()) as { error?: string };
       throw new Error(err.error ?? "Prescription analysis failed");
     }
     return (await res.json()) as PrescriptionAnalysisResult;
+  }
+
+  async function handleCreateNote(payload: {
+    category: CareNoteCategory;
+    text: string;
+    scheduledDate?: string;
+  }) {
+    const res = await fetch("/api/notes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = (await res.json()) as { error?: string };
+      throw new Error(err.error ?? "Failed to save care note");
+    }
+    const updated = (await res.json()) as DashboardPayload;
+    applyDashboardUpdate(updated, "Saved care note.");
+  }
+
+  async function handleDeleteNote(id: string) {
+    const res = await fetch(`/api/notes?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) return;
+    const updated = (await res.json()) as DashboardPayload;
+    applyDashboardUpdate(updated, "Removed care note.");
+  }
+
+  async function handleTriggerSos(
+    channel: "call" | "whatsapp" | "sms" | "card" = "card"
+  ) {
+    const res = await fetch("/api/sos", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ channel }),
+    });
+    if (!res.ok) return;
+    const updated = (await res.json()) as DashboardPayload;
+    applyDashboardUpdate(updated, "Emergency SOS alert logged for caregiver.");
   }
 
   async function handleAddParsedItems(items: ParsedPrescriptionItem[]) {
@@ -265,7 +313,10 @@ export function TavyaApp({ initialData }: TavyaAppProps) {
         onToggleTextScale={() =>
           setTextScale((prev) => (prev === "standard" ? "xl" : "standard"))
         }
-        onOpenSos={() => setSosOpen(true)}
+        onOpenSos={() => {
+          setSosOpen(true);
+          void handleTriggerSos("card");
+        }}
         patientName={
           data.profile.name.trim().toLowerCase() === "your loved one"
             ? "Personalized Care"
@@ -285,7 +336,10 @@ export function TavyaApp({ initialData }: TavyaAppProps) {
             onDoseAction={handleDoseAction}
             onLogVitals={handleLogVitals}
             onOpenCaregiver={() => setMode("caregiver")}
-            onOpenSos={() => setSosOpen(true)}
+            onOpenSos={() => {
+              setSosOpen(true);
+              void handleTriggerSos("card");
+            }}
           />
         ) : (
           <CaregiverView
@@ -298,6 +352,8 @@ export function TavyaApp({ initialData }: TavyaAppProps) {
             onUpdateProfile={handleUpdateProfile}
             onAnalyzePrescription={handleAnalyzePrescription}
             onAddParsedItems={handleAddParsedItems}
+            onCreateNote={handleCreateNote}
+            onDeleteNote={handleDeleteNote}
             onResetDemo={handleResetDemo}
             onClearSchedule={handleClearSchedule}
           />
@@ -314,6 +370,7 @@ export function TavyaApp({ initialData }: TavyaAppProps) {
         onClose={() => setSosOpen(false)}
         profile={data.profile}
         medications={data.medications}
+        onTriggerSos={handleTriggerSos}
       />
     </div>
   );

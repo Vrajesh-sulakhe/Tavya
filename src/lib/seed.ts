@@ -1,5 +1,9 @@
-import { detectInteractions } from "@/domain/interactions";
 import {
+  detectAllergyConflicts,
+  detectInteractions,
+} from "@/domain/interactions";
+import {
+  buildWeeklyMatrix,
   calculateAdherenceStats,
   formatDateKey,
   getRecentDateKeys,
@@ -29,6 +33,7 @@ export function createBlankData(): TavyaStoreData {
     doseLogs: [],
     vitalsLogs: [],
     alerts: [],
+    careNotes: [],
   };
 }
 
@@ -168,6 +173,21 @@ export function createSeedData(
         createdAt: `${todayKey}T08:00:00.000Z`,
       },
     ],
+    careNotes: [
+      {
+        id: "note-seed-1",
+        category: "appointment",
+        text: "Cardiology & HbA1c follow-up with Dr. Arvind Mehta (bring morning BP log).",
+        scheduledDate: recentKeys[recentKeys.length - 1],
+        createdAt: `${todayKey}T08:05:00.000Z`,
+      },
+      {
+        id: "note-seed-2",
+        category: "note",
+        text: "Pharmacy refill strip for Amlodipine ordered for tomorrow morning delivery.",
+        createdAt: `${todayKey}T08:10:00.000Z`,
+      },
+    ],
   };
 }
 
@@ -181,9 +201,15 @@ export function buildDashboardPayload(
 
   return {
     ...data,
+    careNotes: data.careNotes ?? [],
     todayKey,
     adherence: calculateAdherenceStats(data.medications, data.doseLogs, todayKey),
     refillAlerts: getRefillAlerts(data.medications),
     interactions: detectInteractions(activeMedNames),
+    allergyConflicts: detectAllergyConflicts(
+      activeMedNames,
+      data.profile.allergies
+    ),
+    weeklyMatrix: buildWeeklyMatrix(data.medications, data.doseLogs, todayKey),
   };
 }

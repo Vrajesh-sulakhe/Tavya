@@ -1,8 +1,10 @@
 import type {
   AdherenceStats,
+  DailySlotSummary,
   DoseLog,
   DoseSlot,
   DoseStatus,
+  MatrixCellState,
   Medication,
   RefillAlert,
   ScheduledDoseItem,
@@ -120,6 +122,18 @@ export function getSlotForHour(hour: number): DoseSlot {
   return "night";
 }
 
+export type SlotWindowState = "upcoming" | "active" | "passed";
+
+export function getSlotWindowState(
+  slot: DoseSlot,
+  currentHour: number
+): SlotWindowState {
+  const meta = SLOT_META[slot];
+  if (currentHour >= meta.endHour) return "passed";
+  if (currentHour >= meta.startHour) return "active";
+  return "upcoming";
+}
+
 export function getNextDueMedication(
   medications: Medication[],
   doseLogs: DoseLog[],
@@ -221,4 +235,34 @@ export function getRefillAlerts(medications: Medication[]): RefillAlert[] {
   }
 
   return alerts.sort((a, b) => a.daysLeft - b.daysLeft);
+}
+
+function summarizeSlotStatus(items: ScheduledDoseItem[]): MatrixCellState {
+  if (items.length === 0) return "none";
+  if (items.every((item) => item.status === "taken")) return "taken";
+  if (items.some((item) => item.status === "snoozed")) return "snoozed";
+  if (items.some((item) => item.status === "skipped")) return "skipped";
+  return "pending";
+}
+
+export function buildWeeklyMatrix(
+  medications: Medication[],
+  doseLogs: DoseLog[],
+  todayKey: string
+): DailySlotSummary[] {
+  const activeMeds = medications.filter((m) => m.active);
+  const weekKeys = getRecentDateKeys(todayKey, 7);
+
+  return weekKeys.map((dateKey) => {
+    const dayGrouped = groupMedicationsBySlot(activeMeds, doseLogs, dateKey);
+    return {
+      dateKey,
+      slots: {
+        morning: summarizeSlotStatus(dayGrouped.morning),
+        afternoon: summarizeSlotStatus(dayGrouped.afternoon),
+        evening: summarizeSlotStatus(dayGrouped.evening),
+        night: summarizeSlotStatus(dayGrouped.night),
+      },
+    };
+  });
 }

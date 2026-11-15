@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   ArrowUpRight,
+  Camera,
   PlusCircle,
   Sparkle,
   WarningCircle,
+  X,
 } from "@phosphor-icons/react";
 import type {
   ParsedPrescriptionItem,
@@ -13,9 +15,16 @@ import type {
 } from "@/domain/types";
 import { BezelCard } from "./ui/BezelCard";
 
+export interface PrescriptionImageInput {
+  base64: string;
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  fileName: string;
+}
+
 interface PrescriptionAnalyzerProps {
   onAnalyzePrescription: (
-    text: string
+    text: string,
+    image?: PrescriptionImageInput
   ) => Promise<PrescriptionAnalysisResult>;
   onAddParsedItems: (items: ParsedPrescriptionItem[]) => Promise<void>;
 }
@@ -36,17 +45,51 @@ export function PrescriptionAnalyzer({
   onAddParsedItems,
 }: PrescriptionAnalyzerProps) {
   const [text, setText] = useState(SAMPLE_PRESCRIPTIONS[1]!.text);
+  const [selectedImage, setSelectedImage] =
+    useState<PrescriptionImageInput | null>(null);
   const [loading, setLoading] = useState(false);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PrescriptionAnalysisResult | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  function handleImageSelect(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 3_500_000) {
+      setError("Please select a prescription image under 3.5 MB.");
+      return;
+    }
+    const allowedMime = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowedMime.includes(file.type)) {
+      setError("Supported formats: JPG, PNG, or WebP.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+      const base64 = dataUrl.split(",")[1] ?? "";
+      if (base64) {
+        setError(null);
+        setSelectedImage({
+          base64,
+          mimeType: file.type as PrescriptionImageInput["mimeType"],
+          fileName: file.name,
+        });
+      }
+    };
+    reader.readAsDataURL(file);
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
     try {
-      const analysis = await onAnalyzePrescription(text);
+      const analysis = await onAnalyzePrescription(
+        text,
+        selectedImage ?? undefined
+      );
       setResult(analysis);
     } catch (err) {
       setError(
@@ -131,21 +174,57 @@ export function PrescriptionAnalyzer({
         ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <button
-            type="submit"
-            disabled={loading || text.trim().length < 5}
-            className="group inline-flex min-h-[48px] w-full items-center justify-between gap-3 rounded-full bg-[#0F6B54] py-2 pr-2 pl-6 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#0B5341] active:scale-[0.98] disabled:opacity-60 sm:w-auto"
-          >
-            <span>{loading ? "Analyzing…" : "Simplify & Check Safety"}</span>
-            <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5 group-hover:-translate-y-0.5">
-              <ArrowUpRight size={16} weight="light" aria-hidden="true" />
-            </span>
-          </button>
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+            <button
+              type="submit"
+              disabled={loading || (text.trim().length < 5 && !selectedImage)}
+              className="group inline-flex min-h-[48px] w-full items-center justify-between gap-3 rounded-full bg-[#0F6B54] py-2 pr-2 pl-6 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#0B5341] active:scale-[0.98] disabled:opacity-60 sm:w-auto"
+            >
+              <span>{loading ? "Analyzing…" : "Simplify & Check Safety"}</span>
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5 group-hover:-translate-y-0.5">
+                <ArrowUpRight size={16} weight="light" aria-hidden="true" />
+              </span>
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={handleImageSelect}
+              className="sr-only"
+              aria-label="Upload prescription photo"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-full bg-[#FDFBF7] px-4 py-2 text-sm font-semibold text-[#141D19] ring-1 ring-[#141D19]/12 transition-colors hover:bg-[#F2EDE3] sm:w-auto"
+            >
+              <Camera size={18} weight="light" aria-hidden="true" />
+              <span>{selectedImage ? "Change Photo" : "Upload Rx Photo"}</span>
+            </button>
+          </div>
 
           <span className="text-xs text-[#617068]">
             Max 2,000 characters · Validated server-side
           </span>
         </div>
+
+        {selectedImage ? (
+          <div className="inline-flex items-center gap-2 rounded-full bg-[#E6F3EE] px-3.5 py-1.5 text-xs font-semibold text-[#0F6B54]">
+            <span>Attached: {selectedImage.fileName}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedImage(null);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+              }}
+              aria-label="Remove attached photo"
+              className="rounded-full p-0.5 hover:bg-white/70"
+            >
+              <X size={14} weight="bold" aria-hidden="true" />
+            </button>
+          </div>
+        ) : null}
       </form>
 
       {result ? (

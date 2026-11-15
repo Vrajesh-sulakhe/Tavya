@@ -60,12 +60,37 @@ export const logVitalsSchema = z.object({
   note: z.string().trim().max(240).optional(),
 });
 
-export const analyzePrescriptionSchema = z.object({
-  text: z
+export const analyzePrescriptionSchema = z
+  .object({
+    text: z
+      .string()
+      .trim()
+      .max(2000, "Prescription text cannot exceed 2,000 characters")
+      .optional()
+      .default(""),
+    imageBase64: z.string().max(4_500_000).optional(),
+    imageMimeType: z.enum(["image/jpeg", "image/png", "image/webp"]).optional(),
+  })
+  .refine(
+    (data) => data.text.trim().length >= 5 || Boolean(data.imageBase64),
+    {
+      message:
+        "Please paste at least 5 characters of prescription text or upload a prescription photo",
+    }
+  );
+
+export const createCareNoteSchema = z.object({
+  category: z.enum(["note", "appointment"]),
+  text: z.string().trim().min(2, "Note must be at least 2 characters").max(240),
+  scheduledDate: z
     .string()
-    .trim()
-    .min(5, "Please paste at least 5 characters of prescription text")
-    .max(2000, "Prescription text cannot exceed 2,000 characters"),
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)")
+    .optional(),
+});
+
+export const sosAlertSchema = z.object({
+  channel: z.enum(["call", "whatsapp", "sms", "card"]).default("card"),
+  note: z.string().trim().max(180).optional(),
 });
 
 export const updateProfileSchema = z.object({
@@ -122,4 +147,20 @@ export const restoreStateSchema = z.object({
       })
     )
     .max(30),
+  careNotes: z
+    .array(
+      z.object({
+        id: z.string().trim().min(1).max(80),
+        category: z.enum(["note", "appointment"]),
+        text: z.string().trim().min(1).max(240),
+        scheduledDate: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
+        createdAt: z.string().min(1).max(64),
+      })
+    )
+    .max(40)
+    .optional()
+    .default([]),
 });

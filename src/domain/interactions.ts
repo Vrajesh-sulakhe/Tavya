@@ -1,4 +1,4 @@
-import type { InteractionWarning } from "./types";
+import type { AllergyConflict, InteractionWarning } from "./types";
 
 interface PairRule {
   id: string;
@@ -136,4 +136,101 @@ export function detectInteractions(
   return Array.from(warnings.values()).sort((a, b) =>
     a.severity === b.severity ? 0 : a.severity === "major" ? -1 : 1
   );
+}
+
+const ALLERGY_CLASS_MAP: ReadonlyArray<{
+  allergyTerms: string[];
+  medKeywords: string[];
+  summary: string;
+}> = [
+  {
+    allergyTerms: ["penicillin", "beta-lactam", "beta lactam"],
+    medKeywords: [
+      "amoxicillin",
+      "ampicillin",
+      "augmentin",
+      "penicillin",
+      "piperacillin",
+      "cloxacillin",
+    ],
+    summary:
+      "Penicillin-family antibiotics can trigger severe allergic reactions in penicillin-sensitive patients.",
+  },
+  {
+    allergyTerms: ["sulfa", "sulfonamide"],
+    medKeywords: [
+      "sulfamethoxazole",
+      "bactrim",
+      "septran",
+      "celecoxib",
+      "furosemide",
+      "hydrochlorothiazide",
+      "glimepiride",
+      "gliclazide",
+    ],
+    summary:
+      "Medication contains or cross-reacts with sulfonamide compounds.",
+  },
+  {
+    allergyTerms: ["aspirin", "salicylate", "nsaid"],
+    medKeywords: [
+      "aspirin",
+      "ecosprin",
+      "ibuprofen",
+      "naproxen",
+      "diclofenac",
+      "aceclofenac",
+    ],
+    summary:
+      "NSAIDs and aspirin share cross-reactive hypersensitivity pathways.",
+  },
+  {
+    allergyTerms: ["statin"],
+    medKeywords: ["atorvastatin", "rosuvastatin", "simvastatin", "pravastatin"],
+    summary: "Medicine belongs to the statin lipid-lowering class.",
+  },
+];
+
+export function detectAllergyConflicts(
+  medicationNames: readonly string[],
+  allergies: readonly string[]
+): AllergyConflict[] {
+  const conflicts = new Map<string, AllergyConflict>();
+
+  for (const rawAllergy of allergies) {
+    const allergyLower = rawAllergy.trim().toLowerCase();
+    if (!allergyLower) continue;
+
+    for (const rawMed of medicationNames) {
+      const medLower = rawMed.trim().toLowerCase();
+      if (!medLower) continue;
+
+      const classMatch = ALLERGY_CLASS_MAP.find(
+        (entry) =>
+          matchesAny(allergyLower, entry.allergyTerms) &&
+          matchesAny(medLower, entry.medKeywords)
+      );
+
+      const tokens = allergyLower
+        .split(/[\s,/+-]+/)
+        .filter((token) => token.length >= 4 && token !== "drug" && token !== "drugs");
+      const directMatch = tokens.some((token) => medLower.includes(token));
+
+      if (classMatch || directMatch) {
+        const key = `${allergyLower}::${medLower}`;
+        conflicts.set(key, {
+          id: `allergy-${key.replace(/[^a-z0-9]+/g, "-")}`,
+          allergy: rawAllergy,
+          medicationName: rawMed,
+          summary:
+            classMatch?.summary ??
+            `${rawMed} directly matches reported allergy "${rawAllergy}".`,
+          guidance:
+            "Hold administration and verify a safe alternative with the prescribing doctor immediately.",
+        });
+      }
+    }
+  }
+
+  return Array.from(conflicts.values());
 }

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
 import { CaregiverView } from "../CaregiverView";
@@ -45,6 +45,11 @@ describe("Tavya accessibility & role views", () => {
 
     expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /read.*schedule/i })).toBeInTheDocument();
+
+    const hindiBtn = screen.getByRole("button", { name: "हिं" });
+    fireEvent.click(hindiBtn);
+    expect(screen.getByText(/दवाइयाँ सुनें/)).toBeInTheDocument();
+
     await expectNoAxeViolations(container);
   });
 
@@ -86,6 +91,8 @@ describe("Tavya accessibility & role views", () => {
           onUpdateProfile={vi.fn()}
           onAnalyzePrescription={vi.fn()}
           onAddParsedItems={vi.fn()}
+          onCreateNote={vi.fn()}
+          onDeleteNote={vi.fn()}
           onResetDemo={vi.fn()}
           onClearSchedule={vi.fn()}
         />

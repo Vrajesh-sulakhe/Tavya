@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { PhoneCall, ShieldWarning, X } from "@phosphor-icons/react";
+import {
+  ChatCircleText,
+  PhoneCall,
+  ShieldWarning,
+  X,
+} from "@phosphor-icons/react";
 import type { Medication, PatientProfile } from "@/domain/types";
 
 interface SosModalProps {
@@ -9,6 +14,9 @@ interface SosModalProps {
   onClose: () => void;
   profile: PatientProfile;
   medications: Medication[];
+  onTriggerSos?: (
+    channel: "call" | "whatsapp" | "sms" | "card"
+  ) => Promise<void> | void;
 }
 
 export function SosModal({
@@ -16,6 +24,7 @@ export function SosModal({
   onClose,
   profile,
   medications,
+  onTriggerSos,
 }: SosModalProps) {
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -35,6 +44,13 @@ export function SosModal({
   if (!open) return null;
 
   const activeMeds = medications.filter((m) => m.active);
+  const cleanCaregiverDigits = profile.caregiverPhone.replace(/[^\d]/g, "");
+  const emergencyText = [
+    `URGENT from ${profile.name} (${profile.age} yrs) via Tavya:`,
+    `I need assistance right now.`,
+    `Allergies: ${profile.allergies.length > 0 ? profile.allergies.join(", ") : "None"}`,
+    `Active meds: ${activeMeds.length > 0 ? activeMeds.map((m) => `${m.name} ${m.dosage}`).join(", ") : "None listed"}`,
+  ].join("\n");
 
   return (
     <div
@@ -78,22 +94,52 @@ export function SosModal({
 
           <div className="mt-6 space-y-3">
             {profile.caregiverPhone.trim() ? (
-              <a
-                href={`tel:${profile.caregiverPhone.replace(/\s+/g, "")}`}
-                className="group flex min-h-[56px] w-full items-center justify-between rounded-full bg-[#B42318] px-6 py-3 text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#911B12] active:scale-[0.98]"
-              >
-                <span className="text-left">
-                  <span className="block text-xs uppercase tracking-[0.14em] text-white/80">
-                    Primary Caregiver ({profile.caregiverRelation})
+              <div className="space-y-2">
+                <a
+                  href={`tel:${profile.caregiverPhone.replace(/\s+/g, "")}`}
+                  onClick={() => {
+                    void onTriggerSos?.("call");
+                  }}
+                  className="group flex min-h-[56px] w-full items-center justify-between rounded-full bg-[#B42318] px-6 py-3 text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#911B12] active:scale-[0.98]"
+                >
+                  <span className="text-left">
+                    <span className="block text-xs uppercase tracking-[0.14em] text-white/80">
+                      Primary Caregiver ({profile.caregiverRelation})
+                    </span>
+                    <span className="text-lg font-semibold">
+                      Call {profile.caregiverName} · {profile.caregiverPhone}
+                    </span>
                   </span>
-                  <span className="text-lg font-semibold">
-                    Call {profile.caregiverName} · {profile.caregiverPhone}
+                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105">
+                    <PhoneCall size={20} weight="light" aria-hidden="true" />
                   </span>
-                </span>
-                <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105">
-                  <PhoneCall size={20} weight="light" aria-hidden="true" />
-                </span>
-              </a>
+                </a>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <a
+                    href={`https://wa.me/${cleanCaregiverDigits}?text=${encodeURIComponent(emergencyText)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => {
+                      void onTriggerSos?.("whatsapp");
+                    }}
+                    className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-[#E6F3EE] px-4 py-2 text-xs font-semibold text-[#0F6B54] hover:bg-[#D1EAE0]"
+                  >
+                    <ChatCircleText size={16} weight="light" aria-hidden="true" />
+                    <span>WhatsApp Alert</span>
+                  </a>
+                  <a
+                    href={`sms:${profile.caregiverPhone.replace(/\s+/g, "")}?&body=${encodeURIComponent(emergencyText)}`}
+                    onClick={() => {
+                      void onTriggerSos?.("sms");
+                    }}
+                    className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-[#FDFBF7] px-4 py-2 text-xs font-semibold text-[#141D19] ring-1 ring-[#141D19]/12 hover:bg-[#F2EDE3]"
+                  >
+                    <ChatCircleText size={16} weight="light" aria-hidden="true" />
+                    <span>Send SMS Alert</span>
+                  </a>
+                </div>
+              </div>
             ) : (
               <div className="rounded-2xl bg-[#FEE4E2] px-5 py-3.5 text-sm text-[#7A1B14]">
                 <p className="text-xs font-semibold uppercase tracking-[0.14em]">

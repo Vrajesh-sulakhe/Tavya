@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildWeeklyMatrix,
   calculateAdherenceStats,
   formatDateKey,
   getNextDueMedication,
   getRefillAlerts,
+  getSlotWindowState,
   groupMedicationsBySlot,
 } from "../schedule";
 import type { DoseLog, Medication } from "../types";
@@ -136,5 +138,44 @@ describe("schedule domain", () => {
     expect(formatDateKey(new Date("2026-11-15T10:00:00Z"))).toMatch(
       /^\d{4}-\d{2}-\d{2}$/
     );
+  });
+
+  it("determines slot window state accurately for morning/afternoon/evening/night", () => {
+    expect(getSlotWindowState("morning", 8)).toBe("active");
+    expect(getSlotWindowState("morning", 14)).toBe("passed");
+    expect(getSlotWindowState("afternoon", 9)).toBe("upcoming");
+    expect(getSlotWindowState("evening", 18)).toBe("active");
+    expect(getSlotWindowState("night", 21)).toBe("active");
+    expect(getSlotWindowState("night", 15)).toBe("upcoming");
+  });
+
+  it("builds a 7-day by 4-slot weekly adherence matrix", () => {
+    const todayKey = "2026-11-15";
+    const logs: DoseLog[] = [
+      {
+        id: "l1",
+        medicationId: "med-1",
+        dateKey: todayKey,
+        slot: "morning",
+        status: "taken",
+        updatedAt: "2026-11-15T08:00:00.000Z",
+      },
+      {
+        id: "l2",
+        medicationId: "med-2",
+        dateKey: todayKey,
+        slot: "morning",
+        status: "taken",
+        updatedAt: "2026-11-15T08:05:00.000Z",
+      },
+    ];
+
+    const matrix = buildWeeklyMatrix(sampleMeds, logs, todayKey);
+    expect(matrix).toHaveLength(7);
+    const todayRow = matrix[matrix.length - 1]!;
+    expect(todayRow.dateKey).toBe(todayKey);
+    expect(todayRow.slots.morning).toBe("taken");
+    expect(todayRow.slots.afternoon).toBe("none");
+    expect(todayRow.slots.night).toBe("pending");
   });
 });

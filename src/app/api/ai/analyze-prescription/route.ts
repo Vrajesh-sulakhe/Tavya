@@ -32,31 +32,48 @@ const geminiResponseSchema = z.object({
 
 async function tryGeminiAnalysis(
   text: string,
-  apiKey: string
+  apiKey: string,
+  imageBase64?: string,
+  imageMimeType?: "image/jpeg" | "image/png" | "image/webp"
 ): Promise<PrescriptionAnalysisResult | null> {
   try {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
     const prompt = [
-      "Extract medications from the following prescription text for an elderly care app.",
+      "Extract medications from the following prescription text or prescription image for an elderly care app.",
       "Return strict JSON matching { summary: string, items: [{ name, dosage, slots, mealTiming, plainInstruction, purpose }] }.",
       "Allowed slots: morning, afternoon, evening, night.",
       "Allowed mealTiming: before_food, after_food, with_water, anytime.",
       "Write plainInstruction in warm, clear, senior-friendly plain English.",
-      "",
-      `Prescription:\n${text}`,
-    ].join("\n");
+      text ? `\nNotes:\n${text}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const parts: Array<
+      | { text: string }
+      | { inlineData: { mimeType: string; data: string } }
+    > = [{ text: prompt }];
+
+    if (imageBase64 && imageMimeType) {
+      parts.push({
+        inlineData: {
+          mimeType: imageMimeType,
+          data: imageBase64,
+        },
+      });
+    }
 
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
+        contents: [{ parts }],
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0.1,
         },
       }),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(10000),
     });
 
     if (!response.ok) return null;
@@ -98,11 +115,28 @@ export async function POST(request: Request) {
   if (!parsed.success) return parsed.response;
 
   const apiKey = process.env.GEMINI_API_KEY?.trim();
+  const hasImage = Boolean(parsed.data.imageBase64 && parsed.data.imageMimeType);
+
   if (apiKey) {
-    const geminiResult = await tryGeminiAnalysis(parsed.data.text, apiKey);
+    const geminiResult = await tryGeminiAnalysis(
+      parsed.data.text,
+      apiKey,
+      parsed.data.imageBase64,
+      parsed.data.imageMimeType
+    );
     if (geminiResult) {
       return NextResponse.json(geminiResult);
     }
+  }
+
+  if (hasImage && parsed.data.text.trim().length < 5) {
+    return NextResponse.json(
+      {
+        error:
+          "Photo OCR requires GEMINI_API_KEY in Vercel/env settings. You can still type or paste prescription notes above for instant clinical parsing.",
+      },
+      { status: 400 }
+    );
   }
 
   const fallback = parsePrescriptionText(parsed.data.text);

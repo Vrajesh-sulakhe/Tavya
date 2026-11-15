@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useSyncExternalStore, type FormEvent } from "react";
+import { useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
 import {
   ArrowCounterClockwise,
   ArrowUpRight,
+  Bell,
+  CalendarCheck,
   CheckCircle,
   Clock,
   FirstAidKit,
@@ -12,18 +14,23 @@ import {
   SpeakerHigh,
   Sun,
   SunHorizon,
+  Warning,
 } from "@phosphor-icons/react";
 import {
   SLOT_META,
   SLOT_ORDER,
   getNextDueMedication,
+  getSlotWindowState,
   groupMedicationsBySlot,
 } from "@/domain/schedule";
+import {
+  SENIOR_LANGUAGES,
+  type SeniorLanguage,
+} from "@/domain/senior-i18n";
 import type {
   DashboardPayload,
   DoseSlot,
   DoseStatus,
-  MealTiming,
   MoodState,
 } from "@/domain/types";
 import type { TextScale } from "./Navbar";
@@ -50,13 +57,6 @@ interface SeniorViewProps {
   onOpenSos: () => void;
 }
 
-const MEAL_LABELS: Record<MealTiming, string> = {
-  before_food: "Before food",
-  after_food: "After food",
-  with_water: "With full glass of water",
-  anytime: "Anytime in window",
-};
-
 function SlotIcon({ slot }: { slot: DoseSlot }) {
   switch (slot) {
     case "morning":
@@ -70,10 +70,11 @@ function SlotIcon({ slot }: { slot: DoseSlot }) {
   }
 }
 
-function getGreeting(hour: number): string {
-  if (hour < 12) return "Good morning";
-  if (hour < 17) return "Good afternoon";
-  return "Good evening";
+function getLocalizedGreeting(hour: number, lang: SeniorLanguage): string {
+  const t = SENIOR_LANGUAGES[lang];
+  if (hour < 12) return t.morningGreeting;
+  if (hour < 17) return t.afternoonGreeting;
+  return t.eveningGreeting;
 }
 
 export function SeniorView({
@@ -85,18 +86,69 @@ export function SeniorView({
   onOpenSos,
 }: SeniorViewProps) {
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [lang, setLang] = useState<SeniorLanguage>("en");
   const [speechStatus, setSpeechStatus] = useState<string>("");
+  const [reminderState, setReminderState] = useState<
+    "idle" | "granted" | "denied"
+  >(() =>
+    typeof window !== "undefined" &&
+    "Notification" in window &&
+    Notification.permission === "granted"
+      ? "granted"
+      : "idle"
+  );
+  const [snoozedUntil, setSnoozedUntil] = useState<Record<string, number>>({});
+  const [dueReminderBanner, setDueReminderBanner] = useState<string>("");
   const [selectedMood, setSelectedMood] = useState<MoodState>("good");
   const [systolic, setSystolic] = useState("");
   const [diastolic, setDiastolic] = useState("");
   const [bloodSugar, setBloodSugar] = useState("");
   const [vitalsSaved, setVitalsSaved] = useState(false);
 
+  const t = SENIOR_LANGUAGES[lang];
+
   const localHour = useSyncExternalStore(
     () => () => {},
     () => new Date().getHours(),
     () => 12
   );
+
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const hasPendingSnooze = Object.keys(snoozedUntil).length > 0;
+    if (!hasPendingSnooze) return;
+
+    const timer = window.setInterval(() => {
+      const current = Date.now();
+      setNowMs(current);
+
+      const expiredEntry = Object.entries(snoozedUntil).find(
+        ([, deadline]) => deadline <= current
+      );
+      if (expiredEntry) {
+        const [expiredKey] = expiredEntry;
+        const [medId] = expiredKey.split("::");
+        const med = data.medications.find((m) => m.id === medId);
+        const msg = `Snooze ended for ${med?.name ?? "your medicine"} — ready when you are.`;
+        setDueReminderBanner(msg);
+        setSnoozedUntil((prev) => {
+          const copy = { ...prev };
+          delete copy[expiredKey];
+          return copy;
+        });
+        if (
+          typeof window !== "undefined" &&
+          "Notification" in window &&
+          Notification.permission === "granted"
+        ) {
+          new Notification("Tavya Dose Reminder", { body: msg });
+        }
+      }
+    }, 15_000);
+
+    return () => window.clearInterval(timer);
+  }, [snoozedUntil, data.medications]);
 
   const grouped = groupMedicationsBySlot(
     data.medications,
@@ -110,14 +162,26 @@ export function SeniorView({
     localHour
   );
   const hasActiveMeds = data.medications.some((m) => m.active);
+  const nextAppointment = (data.careNotes ?? []).find(
+    (note) => note.category === "appointment"
+  );
   const isPlaceholderProfile =
     data.profile.name.trim().toLowerCase() === "your loved one";
   const firstName = isPlaceholderProfile
     ? "there"
     : (data.profile.name.split(" ")[0] ?? data.profile.name);
   const headingGreeting = isPlaceholderProfile
-    ? getGreeting(localHour)
-    : `${getGreeting(localHour)}, ${firstName}`;
+    ? getLocalizedGreeting(localHour, lang)
+    : `${getLocalizedGreeting(localHour, lang)}, ${firstName}`;
+
+  async function handleEnableReminders() {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setReminderState("denied");
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    setReminderState(perm === "granted" ? "granted" : "denied");
+  }
 
   async function handleDoseClick(
     medicationId: string,
@@ -125,9 +189,25 @@ export function SeniorView({
     status: DoseStatus
   ) {
     const key = `${medicationId}-${slot}`;
+    const snoozeKey = `${medicationId}::${slot}`;
     setBusyKey(key);
     try {
       await onDoseAction(medicationId, slot, status);
+      if (status === "snoozed") {
+        const now = Date.now();
+        setNowMs(now);
+        setSnoozedUntil((prev) => ({
+          ...prev,
+          [snoozeKey]: now + 15 * 60_000,
+        }));
+      } else {
+        setSnoozedUntil((prev) => {
+          if (!(snoozeKey in prev)) return prev;
+          const copy = { ...prev };
+          delete copy[snoozeKey];
+          return copy;
+        });
+      }
     } finally {
       setBusyKey(null);
     }
@@ -144,15 +224,16 @@ export function SeniorView({
 
     window.speechSynthesis.cancel();
     const text = !hasActiveMeds
-      ? `Hello ${firstName}. No medications are scheduled yet. Ask your caregiver to add medicines in Caregiver Hub.`
+      ? t.noMedsSub
       : nextDue
-        ? `Hello ${firstName}. You have taken ${data.adherence.todayTaken} of ${data.adherence.todayTotal} doses today. Next up in the ${SLOT_META[nextDue.slot].label} window: ${nextDue.medication.name} ${nextDue.medication.dosage}. ${nextDue.medication.instructions}.`
-        : `Wonderful, ${firstName}. All ${data.adherence.todayTotal} scheduled medications for today are complete.`;
+        ? `${getLocalizedGreeting(localHour, lang)}. ${nextDue.medication.name} ${nextDue.medication.dosage}. ${nextDue.medication.instructions}.`
+        : t.allDoneTitle;
 
     const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = t.speechLang;
     utterance.rate = 0.92;
     window.speechSynthesis.speak(utterance);
-    setSpeechStatus("Reading your medication summary aloud.");
+    setSpeechStatus(`${t.readSchedule}...`);
   }
 
   async function handleVitalsSubmit(e: FormEvent) {
@@ -181,9 +262,32 @@ export function SeniorView({
         <section aria-labelledby="senior-greeting-heading" className="space-y-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <span className="inline-flex items-center gap-2 rounded-full bg-[#E6F3EE] px-3.5 py-1 text-[11px] font-semibold tracking-[0.18em] text-[#0F6B54] uppercase">
-                Today&apos;s Companion · {data.todayKey}
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-2 rounded-full bg-[#E6F3EE] px-3.5 py-1 text-[11px] font-semibold tracking-[0.18em] text-[#0F6B54] uppercase">
+                  {t.companionTag} · {data.todayKey}
+                </span>
+                <div
+                  role="group"
+                  aria-label="Language selector"
+                  className="inline-flex rounded-full bg-white p-0.5 ring-1 ring-[#141D19]/10"
+                >
+                  {(["en", "hi", "mr"] as const).map((code) => (
+                    <button
+                      key={code}
+                      type="button"
+                      onClick={() => setLang(code)}
+                      aria-pressed={lang === code}
+                      className={`min-h-[30px] rounded-full px-2.5 text-xs font-semibold transition-colors ${
+                        lang === code
+                          ? "bg-[#0F6B54] text-white"
+                          : "text-[#46534C] hover:text-[#141D19]"
+                      }`}
+                    >
+                      {SENIOR_LANGUAGES[code].shortLabel}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <h1
                 id="senior-greeting-heading"
                 className="font-display mt-3 text-4xl leading-[1.08] text-[#141D19] sm:text-5xl"
@@ -201,20 +305,78 @@ export function SeniorView({
                     here.
                   </>
                 ) : (
-                  "No medications are scheduled yet. Your caregiver can set up today's medicines in Caregiver Hub."
+                  t.noMedsSub
                 )}
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={handleReadSchedule}
-              className="group inline-flex min-h-[52px] w-full items-center justify-center gap-3 rounded-full bg-white px-5 py-3 text-sm font-semibold text-[#141D19] shadow-sm ring-1 ring-[#141D19]/12 transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#F2EDE3] active:scale-[0.98] sm:w-auto sm:self-start"
-            >
-              <SpeakerHigh size={20} weight="light" aria-hidden="true" />
-              <span>Read My Schedule</span>
-            </button>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+              <button
+                type="button"
+                onClick={handleEnableReminders}
+                className={`inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold ring-1 transition-colors sm:w-auto ${
+                  reminderState === "granted"
+                    ? "bg-[#E6F3EE] text-[#0F6B54] ring-[#0F6B54]/25"
+                    : "bg-white text-[#46534C] ring-[#141D19]/12 hover:bg-[#F2EDE3]"
+                }`}
+              >
+                <Bell size={18} weight="light" aria-hidden="true" />
+                <span>
+                  {reminderState === "granted"
+                    ? t.remindersOn
+                    : reminderState === "denied"
+                      ? t.remindersBlocked
+                      : t.enableReminders}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleReadSchedule}
+                className="group inline-flex min-h-[48px] w-full items-center justify-center gap-3 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-[#141D19] shadow-sm ring-1 ring-[#141D19]/12 transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#F2EDE3] active:scale-[0.98] sm:w-auto"
+              >
+                <SpeakerHigh size={20} weight="light" aria-hidden="true" />
+                <span>{t.readSchedule}</span>
+              </button>
+            </div>
           </div>
+
+          {dueReminderBanner ? (
+            <div
+              role="status"
+              className="flex items-center justify-between gap-3 rounded-2xl bg-[#FEF3C7] px-4 py-3 text-sm font-semibold text-[#92400E] ring-1 ring-[#B45309]/25"
+            >
+              <span>{dueReminderBanner}</span>
+              <button
+                type="button"
+                onClick={() => setDueReminderBanner("")}
+                className="rounded-full bg-white/80 px-3 py-1 text-xs font-bold text-[#92400E]"
+              >
+                Dismiss
+              </button>
+            </div>
+          ) : null}
+
+          {nextAppointment ? (
+            <div className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 text-sm text-[#141D19] ring-1 ring-[#141D19]/10">
+              <CalendarCheck
+                size={20}
+                weight="light"
+                className="shrink-0 text-[#0F6B54]"
+                aria-hidden="true"
+              />
+              <div>
+                <span className="font-semibold text-[#0F6B54]">
+                  {t.nextVisitLabel}
+                  {nextAppointment.scheduledDate
+                    ? ` · ${nextAppointment.scheduledDate}`
+                    : ""}
+                  :{" "}
+                </span>
+                <span>{nextAppointment.text}</span>
+              </div>
+            </div>
+          ) : null}
 
           {speechStatus ? (
             <p className="text-sm font-medium text-[#0F6B54]" role="status">
@@ -230,19 +392,16 @@ export function SeniorView({
               <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
                 <div>
                   <h2 className="font-display text-3xl text-[#141D19]">
-                    No medications scheduled yet
+                    {t.emptyHeroTitle}
                   </h2>
-                  <p className="mt-1 text-[#46534C]">
-                    Caregivers can add medicines, upload a prescription, and
-                    configure daily slots in Caregiver Hub.
-                  </p>
+                  <p className="mt-1 text-[#46534C]">{t.emptyHeroBody}</p>
                 </div>
                 <button
                   type="button"
                   onClick={onOpenCaregiver}
                   className="group inline-flex min-h-[52px] w-full shrink-0 items-center justify-between gap-3 rounded-full bg-[#0F6B54] py-2 pr-2 pl-6 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#0B5341] active:scale-[0.98] sm:w-auto"
                 >
-                  <span>Open Caregiver Hub</span>
+                  <span>{t.openCaregiverHub}</span>
                   <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5 group-hover:-translate-y-0.5">
                     <ArrowUpRight size={18} weight="light" aria-hidden="true" />
                   </span>
@@ -255,11 +414,11 @@ export function SeniorView({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-full bg-[#E6F3EE] px-3 py-1 text-xs font-semibold text-[#0F6B54]">
-                        Next Up · {SLOT_META[nextDue.slot].label} (
+                        {t.nextUpLabel} · {t.slots[nextDue.slot]} (
                         {SLOT_META[nextDue.slot].windowLabel})
                       </span>
                       <span className="rounded-full bg-[#F2EDE3] px-3 py-1 text-xs font-medium text-[#46534C]">
-                        {MEAL_LABELS[nextDue.medication.mealTiming]}
+                        {t.meals[nextDue.medication.mealTiming]}
                       </span>
                     </div>
                     <h2 className="font-display mt-2.5 text-3xl text-[#141D19] sm:mt-3 sm:text-4xl">
@@ -289,7 +448,7 @@ export function SeniorView({
                     }
                     className="group inline-flex min-h-[54px] w-full items-center justify-between gap-4 rounded-full bg-[#0F6B54] py-2.5 pr-2.5 pl-6 text-base font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#0B5341] active:scale-[0.98] disabled:opacity-60 sm:w-auto sm:justify-start"
                   >
-                    <span>Mark Dose Taken</span>
+                    <span>{t.markDoseTaken}</span>
                     <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:scale-105">
                       <CheckCircle size={22} weight="light" aria-hidden="true" />
                     </span>
@@ -309,7 +468,7 @@ export function SeniorView({
                     className="inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-full bg-[#FEF3C7] px-5 py-3 text-base font-semibold text-[#92400E] transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#FDE68A] active:scale-[0.98] sm:w-auto"
                   >
                     <Clock size={20} weight="light" aria-hidden="true" />
-                    <span>Snooze 15m</span>
+                    <span>{t.snooze15}</span>
                   </button>
                 </div>
               </div>
@@ -321,12 +480,9 @@ export function SeniorView({
                   </span>
                   <div>
                     <h2 className="font-display text-3xl text-[#141D19]">
-                      All scheduled doses complete for today
+                      {t.allDoneTitle}
                     </h2>
-                    <p className="mt-1 text-[#46534C]">
-                      Great job staying steady. Everything scheduled for today
-                      is complete.
-                    </p>
+                    <p className="mt-1 text-[#46534C]">{t.allDoneBody}</p>
                   </div>
                 </div>
               </div>
@@ -343,10 +499,10 @@ export function SeniorView({
               id="daily-timeline-heading"
               className="font-display text-2xl text-[#141D19] sm:text-3xl"
             >
-              Daily Medication Timeline
+              {t.timelineTitle}
             </h2>
             <span className="font-mono-num text-sm font-semibold text-[#0F6B54]">
-              {data.adherence.todayPercent}% complete
+              {data.adherence.todayPercent}% {t.completeLabel}
             </span>
           </div>
 
@@ -354,12 +510,18 @@ export function SeniorView({
             {SLOT_ORDER.map((slot) => {
               const items = grouped[slot];
               const meta = SLOT_META[slot];
+              const windowState = getSlotWindowState(slot, localHour);
+              const hasOverdueItem =
+                windowState === "passed" &&
+                items.some(
+                  (i) => i.status === "pending" || i.status === "snoozed"
+                );
               return (
                 <BezelCard key={slot} innerClassName="p-4 sm:p-6">
                   <div className="flex items-center justify-between border-b border-[#141D19]/[0.07] pb-4">
                     <div className="flex items-center gap-2.5 text-[#141D19]">
                       <SlotIcon slot={slot} />
-                      <h3 className="font-display text-2xl">{meta.label}</h3>
+                      <h3 className="font-display text-2xl">{t.slots[slot]}</h3>
                     </div>
 
                     <span className="font-mono-num rounded-full bg-[#FDFBF7] px-3 py-1 text-xs font-medium text-[#46534C] ring-1 ring-[#141D19]/[0.08]">
@@ -367,14 +529,32 @@ export function SeniorView({
                     </span>
                   </div>
 
+                  {hasOverdueItem ? (
+                    <div className="mt-3 flex items-start gap-2 rounded-2xl bg-[#FEF3C7] px-3.5 py-2.5 text-xs font-medium text-[#92400E] ring-1 ring-[#B45309]/20">
+                      <Warning
+                        size={16}
+                        weight="light"
+                        className="mt-0.5 shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span>{t.windowPassedGuard}</span>
+                    </div>
+                  ) : null}
+
                   <div className="mt-4 space-y-4">
                     {items.length === 0 ? (
                       <p className="rounded-2xl bg-[#FDFBF7] px-4 py-6 text-center text-sm text-[#617068]">
-                        Nothing scheduled in this window.
+                        {t.nothingScheduled}
                       </p>
                     ) : (
                       items.map(({ medication, status }) => {
                         const actionKey = `${medication.id}-${slot}`;
+                        const snoozeKey = `${medication.id}::${slot}`;
+                        const deadline = snoozedUntil[snoozeKey];
+                        const minsLeft =
+                          deadline && deadline > nowMs
+                            ? Math.max(1, Math.ceil((deadline - nowMs) / 60_000))
+                            : null;
                         const isBusy = busyKey === actionKey;
                         return (
                           <div
@@ -396,7 +576,7 @@ export function SeniorView({
                                   </p>
                                   <p className="mt-1 text-xs font-medium text-[#617068]">
                                     {medication.purpose} ·{" "}
-                                    {MEAL_LABELS[medication.mealTiming]}
+                                    {t.meals[medication.mealTiming]}
                                   </p>
                                 </div>
                               </div>
@@ -410,7 +590,13 @@ export function SeniorView({
                                       : "bg-white text-[#46534C] ring-1 ring-[#141D19]/10"
                                 }`}
                               >
-                                {status}
+                                {status === "snoozed" && minsLeft
+                                  ? `${t.snoozedStatus} · ${minsLeft}m`
+                                  : status === "taken"
+                                    ? t.takenStatus
+                                    : status === "snoozed"
+                                      ? t.snoozedStatus
+                                      : t.pendingStatus}
                               </span>
                             </div>
 
@@ -434,7 +620,7 @@ export function SeniorView({
                                       weight="light"
                                       aria-hidden="true"
                                     />
-                                    <span>Taken</span>
+                                    <span>{t.takenBtn}</span>
                                   </button>
                                   <button
                                     type="button"
@@ -453,7 +639,7 @@ export function SeniorView({
                                       weight="light"
                                       aria-hidden="true"
                                     />
-                                    <span>Snooze</span>
+                                    <span>{t.snoozeBtn}</span>
                                   </button>
                                 </>
                               ) : (
@@ -474,7 +660,7 @@ export function SeniorView({
                                     weight="light"
                                     aria-hidden="true"
                                   />
-                                  <span>Undo Taken</span>
+                                  <span>{t.undoTaken}</span>
                                 </button>
                               )}
                             </div>
@@ -506,7 +692,7 @@ export function SeniorView({
                   id="wellness-checkin-heading"
                   className="font-display text-3xl text-[#141D19]"
                 >
-                  How are you feeling today?
+                  {t.wellnessTitle}
                 </h2>
                 <p className="text-sm text-[#46534C]">
                   Updates {data.profile.caregiverName} automatically—especially
@@ -521,37 +707,32 @@ export function SeniorView({
                 aria-label="Current wellness feeling"
                 className="grid grid-cols-2 gap-3 sm:grid-cols-4"
               >
-                {(
-                  [
-                    { value: "good", label: "Feeling Good" },
-                    { value: "tired", label: "A Bit Tired" },
-                    { value: "dizzy", label: "Dizzy / Unsteady" },
-                    { value: "nausea", label: "Upset Stomach" },
-                  ] as const
-                ).map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="radio"
-                    aria-checked={selectedMood === option.value}
-                    onClick={() => setSelectedMood(option.value)}
-                    className={`min-h-[52px] rounded-2xl px-4 py-3 text-sm font-semibold ring-1 transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${
-                      selectedMood === option.value
-                        ? option.value === "dizzy"
-                          ? "bg-[#FEE4E2] text-[#B42318] ring-[#B42318]/40"
-                          : "bg-[#E6F3EE] text-[#0F6B54] ring-[#0F6B54]/40"
-                        : "bg-[#FDFBF7] text-[#141D19] ring-[#141D19]/10 hover:bg-[#F2EDE3]"
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                {(["good", "tired", "dizzy", "nausea"] as const).map(
+                  (value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selectedMood === value}
+                      onClick={() => setSelectedMood(value)}
+                      className={`min-h-[52px] rounded-2xl px-4 py-3 text-sm font-semibold ring-1 transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+                        selectedMood === value
+                          ? value === "dizzy"
+                            ? "bg-[#FEE4E2] text-[#B42318] ring-[#B42318]/40"
+                            : "bg-[#E6F3EE] text-[#0F6B54] ring-[#0F6B54]/40"
+                          : "bg-[#FDFBF7] text-[#141D19] ring-[#141D19]/10 hover:bg-[#F2EDE3]"
+                      }`}
+                    >
+                      {t.moods[value]}
+                    </button>
+                  )
+                )}
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <label className="block">
                   <span className="text-xs font-semibold text-[#46534C]">
-                    BP Top (Systolic)
+                    {t.bpTop}
                   </span>
                   <input
                     type="number"
@@ -566,7 +747,7 @@ export function SeniorView({
                 </label>
                 <label className="block">
                   <span className="text-xs font-semibold text-[#46534C]">
-                    BP Bottom (Diastolic)
+                    {t.bpBottom}
                   </span>
                   <input
                     type="number"
@@ -581,7 +762,7 @@ export function SeniorView({
                 </label>
                 <label className="block">
                   <span className="text-xs font-semibold text-[#46534C]">
-                    Blood Sugar (mg/dL)
+                    {t.bloodSugar}
                   </span>
                   <input
                     type="number"
@@ -601,7 +782,7 @@ export function SeniorView({
                   type="submit"
                   className="group inline-flex min-h-[52px] items-center gap-3 rounded-full bg-[#141D19] py-2 pr-2.5 pl-6 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#27352E] active:scale-[0.98]"
                 >
-                  <span>Share Check-in with Caregiver</span>
+                  <span>{t.saveCheckin}</span>
                   <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5 group-hover:-translate-y-0.5">
                     <ArrowUpRight size={18} weight="light" aria-hidden="true" />
                   </span>
@@ -612,7 +793,7 @@ export function SeniorView({
                     className="text-sm font-semibold text-[#0F6B54]"
                     role="status"
                   >
-                    Check-in saved &amp; shared.
+                    {t.savedCheckin}
                   </span>
                 ) : null}
               </div>
@@ -629,7 +810,7 @@ export function SeniorView({
                 <FirstAidKit size={24} weight="light" aria-hidden="true" />
               </span>
               <h3 className="font-display mt-4 text-3xl text-[#141D19]">
-                Need Immediate Help?
+                {t.sosTitle}
               </h3>
               <p className="mt-2 text-sm text-[#46534C]">
                 One tap opens {data.profile.caregiverName}&apos;s direct phone
@@ -642,7 +823,7 @@ export function SeniorView({
               onClick={onOpenSos}
               className="group mt-6 inline-flex min-h-[56px] w-full items-center justify-between rounded-full bg-[#B42318] py-2.5 pr-2.5 pl-6 text-base font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#911B12] active:scale-[0.98]"
             >
-              <span>Open SOS Card</span>
+              <span>{t.sosButton}</span>
               <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105">
                 <ArrowUpRight size={20} weight="light" aria-hidden="true" />
               </span>

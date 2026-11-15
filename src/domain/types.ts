@@ -55,6 +55,31 @@ export interface CareAlert {
   createdAt: string;
 }
 
+export type CareNoteCategory = "note" | "appointment";
+
+export interface CareNote {
+  id: string;
+  category: CareNoteCategory;
+  text: string;
+  scheduledDate?: string;
+  createdAt: string;
+}
+
+export interface AllergyConflict {
+  id: string;
+  allergy: string;
+  medicationName: string;
+  summary: string;
+  guidance: string;
+}
+
+export type MatrixCellState = "taken" | "pending" | "snoozed" | "skipped" | "none";
+
+export interface DailySlotSummary {
+  dateKey: string;
+  slots: Record<DoseSlot, MatrixCellState>;
+}
+
 export interface PatientProfile {
   name: string;
   age: number;
@@ -120,11 +145,15 @@ export interface TavyaStoreData {
   doseLogs: DoseLog[];
   vitalsLogs: VitalsLog[];
   alerts: CareAlert[];
+  careNotes?: CareNote[];
 }
 
 export interface DashboardPayload extends TavyaStoreData {
+  careNotes: CareNote[];
   todayKey: string;
   adherence: AdherenceStats;
   refillAlerts: RefillAlert[];
   interactions: InteractionWarning[];
+  allergyConflicts: AllergyConflict[];
+  weeklyMatrix: DailySlotSummary[];
 }

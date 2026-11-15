@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectInteractions } from "../interactions";
+import { detectAllergyConflicts, detectInteractions } from "../interactions";
 import { parsePrescriptionText } from "../prescription-parser";
 
 describe("interactions & prescription parser", () => {
@@ -27,5 +27,18 @@ describe("interactions & prescription parser", () => {
     expect(result.items[2]?.slots).toEqual(["morning"]);
     expect(result.items[2]?.mealTiming).toBe("before_food");
     expect(result.disclaimer).toContain("licensed physician");
+  });
+
+  it("cross-screens medications against profile allergies including drug classes", () => {
+    const conflicts = detectAllergyConflicts(
+      ["Amoxicillin 500mg", "Glimepiride 2mg", "Metformin 500mg"],
+      ["Penicillin", "Sulfa drugs"]
+    );
+
+    expect(conflicts).toHaveLength(2);
+    expect(conflicts.map((c) => c.medicationName)).toEqual(
+      expect.arrayContaining(["Amoxicillin 500mg", "Glimepiride 2mg"])
+    );
+    expect(conflicts[0]?.guidance).toBeTruthy();
   });
 });

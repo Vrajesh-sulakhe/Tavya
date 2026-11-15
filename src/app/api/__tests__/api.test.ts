@@ -13,7 +13,9 @@ import { POST as logDose } from "../doses/route";
 import { GET as getHealth } from "../health/route";
 import { POST as createMedication } from "../medications/route";
 import { PATCH as updateMedication } from "../medications/[id]/route";
+import { DELETE as deleteNote, POST as createNote } from "../notes/route";
 import { PATCH as updateProfile } from "../profile/route";
+import { POST as triggerSos } from "../sos/route";
 import { POST as logVitals } from "../vitals/route";
 
 let tmpDir: string;
@@ -257,5 +259,54 @@ describe("Tavya API routes", () => {
     const restored = await restoredRes.json();
     expect(restored.medications).toHaveLength(1);
     expect(restored.medications[0].name).toBe("Custom Vitamin B12");
+  });
+
+  it("POST/DELETE /api/notes manages caregiver notes and doctor visits", async () => {
+    const createRes = await createNote(
+      jsonRequest("http://localhost/api/notes", "POST", {
+        category: "appointment",
+        text: "Cardiology follow-up with Dr. Rao",
+        scheduledDate: "2026-11-20",
+      })
+    );
+    expect(createRes.status).toBe(201);
+    const createdData = await createRes.json();
+    expect(createdData.careNotes).toHaveLength(1);
+    expect(createdData.careNotes[0].category).toBe("appointment");
+
+    const noteId = createdData.careNotes[0].id as string;
+    const deleteRes = await deleteNote(
+      new NextRequest(`http://localhost/api/notes?id=${encodeURIComponent(noteId)}`, {
+        method: "DELETE",
+      })
+    );
+    expect(deleteRes.status).toBe(200);
+    const afterDelete = await deleteRes.json();
+    expect(afterDelete.careNotes).toHaveLength(0);
+  });
+
+  it("POST /api/sos creates a critical SOS caregiver alert", async () => {
+    const res = await triggerSos(
+      jsonRequest("http://localhost/api/sos", "POST", {
+        channel: "whatsapp",
+        note: "Requested help from Senior view",
+      })
+    );
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.alerts[0]?.category).toBe("sos");
+    expect(data.alerts[0]?.severity).toBe("critical");
+  });
+
+  it("POST /api/ai/analyze-prescription returns 400 for image-only without GEMINI_API_KEY", async () => {
+    const res = await analyzePrescription(
+      jsonRequest("http://localhost/api/ai/analyze-prescription", "POST", {
+        imageBase64: "dGVzdA==",
+        imageMimeType: "image/png",
+      })
+    );
+    expect(res.status).toBe(400);
+    const payload = await res.json();
+    expect(payload.error).toMatch(/gemini/i);
   });
 });
