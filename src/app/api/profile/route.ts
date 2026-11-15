@@ -1,18 +1,19 @@
 import { NextResponse } from "next/server";
 import { updateProfileSchema } from "@/domain/schemas";
-import { formatDateKey } from "@/domain/schedule";
-import { parseJsonBody } from "@/lib/api-utils";
-import { buildDashboardPayload } from "@/lib/seed";
-import { mutateStore } from "@/lib/store";
+import { parseJsonBody, requireSession } from "@/lib/api-utils";
+import { getDashboardSnapshot, mutateStore } from "@/lib/store";
 
 export async function PATCH(request: Request) {
+  const auth = await requireSession(request, ["caretaker"]);
+  if (!auth.success) return auth.response;
+
   const parsed = await parseJsonBody(request, updateProfileSchema);
   if (!parsed.success) return parsed.response;
 
-  const nextStore = mutateStore((draft) => ({
+  await mutateStore((draft) => ({
     ...draft,
     profile: parsed.data,
   }));
 
-  return NextResponse.json(buildDashboardPayload(nextStore, formatDateKey()));
+  return NextResponse.json(await getDashboardSnapshot(auth.session.role));
 }

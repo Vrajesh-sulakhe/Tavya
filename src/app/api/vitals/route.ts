@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { logVitalsSchema } from "@/domain/schemas";
-import { formatDateKey } from "@/domain/schedule";
 import type { CareAlert, VitalsLog } from "@/domain/types";
-import { parseJsonBody } from "@/lib/api-utils";
-import { buildDashboardPayload } from "@/lib/seed";
-import { mutateStore } from "@/lib/store";
+import { parseJsonBody, requireSession } from "@/lib/api-utils";
+import { getDashboardSnapshot, mutateStore } from "@/lib/store";
 
 export async function POST(request: Request) {
+  const auth = await requireSession(request, ["senior", "caretaker"]);
+  if (!auth.success) return auth.response;
+
   const parsed = await parseJsonBody(request, logVitalsSchema);
   if (!parsed.success) return parsed.response;
 
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
       }
     : null;
 
-  const nextStore = mutateStore((draft) => ({
+  await mutateStore((draft) => ({
     ...draft,
     vitalsLogs: [entry, ...draft.vitalsLogs].slice(0, 20),
     alerts: newAlert
@@ -58,8 +59,7 @@ export async function POST(request: Request) {
       : draft.alerts,
   }));
 
-  return NextResponse.json(
-    buildDashboardPayload(nextStore, formatDateKey()),
-    { status: 201 }
-  );
+  return NextResponse.json(await getDashboardSnapshot(auth.session.role), {
+    status: 201,
+  });
 }

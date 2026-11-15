@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createMedicationSchema } from "@/domain/schemas";
-import { formatDateKey } from "@/domain/schedule";
 import type { Medication } from "@/domain/types";
-import { parseJsonBody } from "@/lib/api-utils";
-import { buildDashboardPayload } from "@/lib/seed";
-import { mutateStore } from "@/lib/store";
+import { parseJsonBody, requireSession } from "@/lib/api-utils";
+import { getDashboardSnapshot, mutateStore } from "@/lib/store";
 
 export async function POST(request: Request) {
+  const auth = await requireSession(request, ["caretaker"]);
+  if (!auth.success) return auth.response;
+
   const parsed = await parseJsonBody(request, createMedicationSchema);
   if (!parsed.success) return parsed.response;
 
@@ -17,7 +18,7 @@ export async function POST(request: Request) {
     active: true,
   };
 
-  const nextStore = mutateStore((draft) => ({
+  await mutateStore((draft) => ({
     ...draft,
     medications: [newMedication, ...draft.medications],
   }));
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
   return NextResponse.json(
     {
       medication: newMedication,
-      dashboard: buildDashboardPayload(nextStore, formatDateKey()),
+      dashboard: await getDashboardSnapshot(auth.session.role),
     },
     { status: 201 }
   );

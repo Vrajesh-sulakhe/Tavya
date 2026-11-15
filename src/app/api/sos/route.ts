@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { sosAlertSchema } from "@/domain/schemas";
-import { formatDateKey } from "@/domain/schedule";
-import { parseJsonBody } from "@/lib/api-utils";
-import { buildDashboardPayload } from "@/lib/seed";
-import { mutateStore } from "@/lib/store";
+import { parseJsonBody, requireSession } from "@/lib/api-utils";
+import { getDashboardSnapshot, mutateStore } from "@/lib/store";
 
 export async function POST(request: Request) {
+  const auth = await requireSession(request, ["senior", "caretaker"]);
+  if (!auth.success) return auth.response;
+
   const parsed = await parseJsonBody(request, sosAlertSchema);
   if (!parsed.success) return parsed.response;
 
-  const nextStore = mutateStore((draft) => {
+  await mutateStore((draft) => {
     const channelLabel =
       parsed.data.channel === "whatsapp"
         ? "WhatsApp"
@@ -37,7 +38,7 @@ export async function POST(request: Request) {
     };
   });
 
-  return NextResponse.json(buildDashboardPayload(nextStore, formatDateKey()), {
+  return NextResponse.json(await getDashboardSnapshot(auth.session.role), {
     status: 201,
   });
 }

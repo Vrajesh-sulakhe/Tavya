@@ -49,7 +49,7 @@ export interface VitalsLog {
 export interface CareAlert {
   id: string;
   severity: "info" | "warning" | "critical";
-  category: "refill" | "interaction" | "wellness" | "missed_dose" | "sos";
+  category: "refill" | "interaction" | "wellness" | "missed_dose" | "sos" | "appointment";
   title: string;
   detail: string;
   createdAt: string;
@@ -139,6 +139,69 @@ export interface RefillAlert {
   urgent: boolean;
 }
 
+export type CircleRole = "senior" | "caretaker" | "family";
+
+/** Server-only member record. Passcode hash and salt must never leave the server. */
+export interface CircleMember {
+  id: string;
+  name: string;
+  role: CircleRole;
+  email?: string;
+  passcodeHash: string;
+  passcodeSalt: string;
+  createdAt: string;
+}
+
+/** Client-safe projection of a circle member. */
+export interface PublicMember {
+  id: string;
+  name: string;
+  role: CircleRole;
+  email?: string;
+}
+
+export interface CareCircle {
+  members: CircleMember[];
+  isDemo: boolean;
+  /** Fallback HMAC secret used only when TAVYA_SESSION_SECRET is not configured. */
+  sessionSecret: string;
+}
+
+/** Sharing preferences owned by the senior, keeping them in control of their data. */
+export interface SharingConsent {
+  shareVitalsWithFamily: boolean;
+  emailFamilyOnMissedDose: boolean;
+}
+
+export interface Appointment {
+  id: string;
+  title: string;
+  doctor?: string;
+  location?: string;
+  startsAt: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export type ReminderKind = "upcoming_dose" | "missed_dose" | "appointment";
+
+export interface EmailLogEntry {
+  id: string;
+  dedupeKey: string;
+  kind: ReminderKind;
+  subject: string;
+  recipients: string[];
+  status: "sent" | "preview" | "failed" | "skipped";
+  detail?: string;
+  createdAt: string;
+}
+
+export interface SessionInfo {
+  memberId: string;
+  name: string;
+  role: CircleRole;
+}
+
 export interface TavyaStoreData {
   profile: PatientProfile;
   medications: Medication[];
@@ -146,10 +209,22 @@ export interface TavyaStoreData {
   vitalsLogs: VitalsLog[];
   alerts: CareAlert[];
   careNotes?: CareNote[];
+  appointments?: Appointment[];
+  emailLog?: EmailLogEntry[];
+  consent?: SharingConsent;
+  circle?: CareCircle;
 }
 
-export interface DashboardPayload extends TavyaStoreData {
+export interface DashboardPayload
+  extends Omit<TavyaStoreData, "circle" | "appointments" | "emailLog" | "consent"> {
   careNotes: CareNote[];
+  appointments: Appointment[];
+  emailLog: EmailLogEntry[];
+  consent: SharingConsent;
+  members: PublicMember[];
+  viewerRole: CircleRole;
+  persistence: "durable" | "ephemeral";
+  emailDelivery: "live" | "preview";
   todayKey: string;
   adherence: AdherenceStats;
   refillAlerts: RefillAlert[];

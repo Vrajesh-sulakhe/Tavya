@@ -2,24 +2,27 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { logDoseSchema } from "@/domain/schemas";
 import { formatDateKey } from "@/domain/schedule";
-import { parseJsonBody } from "@/lib/api-utils";
+import { parseJsonBody, requireSession } from "@/lib/api-utils";
+import { getEmailDeliveryMode } from "@/lib/email";
 import { buildDashboardPayload } from "@/lib/seed";
-import { mutateStore, readStore } from "@/lib/store";
+import { getPersistenceMode, mutateStore } from "@/lib/store";
 
 export async function POST(request: Request) {
+  const auth = await requireSession(request, ["senior", "caretaker"]);
+  if (!auth.success) return auth.response;
+
   const parsed = await parseJsonBody(request, logDoseSchema);
   if (!parsed.success) return parsed.response;
 
   const { medicationId, slot, status } = parsed.data;
   const dateKey = parsed.data.dateKey ?? formatDateKey();
 
-  const current = readStore();
-  const med = current.medications.find((m) => m.id === medicationId);
+  const med = auth.store.medications.find((m) => m.id === medicationId);
   if (!med) {
     return NextResponse.json({ error: "Medication not found" }, { status: 404 });
   }
 
-  const nextStore = mutateStore((draft) => {
+  const nextStore = await mutateStore((draft) => {
     const existingIdx = draft.doseLogs.findIndex(
       (l) =>
         l.medicationId === medicationId &&
@@ -66,5 +69,12 @@ export async function POST(request: Request) {
     };
   });
 
-  return NextResponse.json(buildDashboardPayload(nextStore, dateKey));
+  return NextResponse.json(
+    buildDashboardPayload(nextStore, {
+      todayKey: dateKey,
+      viewerRole: auth.session.role,
+      persistence: getPersistenceMode(),
+      emailDelivery: getEmailDeliveryMode(),
+    })
+  );
 }

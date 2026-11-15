@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import {
   ArrowCounterClockwise,
   BellRinging,
@@ -35,6 +35,11 @@ import {
   AddMedicationModal,
   type NewMedicationPayload,
 } from "./AddMedicationModal";
+import {
+  CareCirclePanels,
+  type CreateAppointmentInput,
+  type CreateMemberInput,
+} from "./CareCirclePanels";
 import { EditProfileModal } from "./EditProfileModal";
 import {
   PrescriptionAnalyzer,
@@ -70,6 +75,11 @@ interface CaregiverViewProps {
     scheduledDate?: string;
   }) => Promise<void>;
   onDeleteNote?: (id: string) => Promise<void>;
+  onCreateAppointment?: (payload: CreateAppointmentInput) => Promise<void>;
+  onDeleteAppointment?: (id: string) => Promise<void>;
+  onAddMember?: (payload: CreateMemberInput) => Promise<void>;
+  onRemoveMember?: (id: string) => Promise<void>;
+  onRunReminders?: () => Promise<string>;
   onResetDemo: () => Promise<void>;
   onClearSchedule: () => Promise<void>;
 }
@@ -94,9 +104,18 @@ export function CaregiverView({
   onAddParsedItems,
   onCreateNote,
   onDeleteNote,
+  onCreateAppointment,
+  onDeleteAppointment,
+  onAddMember,
+  onRemoveMember,
+  onRunReminders,
   onResetDemo,
   onClearSchedule,
 }: CaregiverViewProps) {
+  const isCaretaker = data.viewerRole === "caretaker";
+  const vitalsPrivateForFamily =
+    data.viewerRole === "family" && !data.consent.shareVitalsWithFamily;
+
   const [medModalOpen, setMedModalOpen] = useState(false);
   const [editingMed, setEditingMed] = useState<Medication | null>(null);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
@@ -107,23 +126,41 @@ export function CaregiverView({
   const [noteDate, setNoteDate] = useState("");
   const [savingNote, setSavingNote] = useState(false);
 
-  const recentVitals = data.vitalsLogs.slice(0, 20);
+  const recentVitals = useMemo(
+    () => (vitalsPrivateForFamily ? [] : data.vitalsLogs.slice(0, 20)),
+    [data.vitalsLogs, vitalsPrivateForFamily]
+  );
   const radius = 38;
   const circumference = 2 * Math.PI * radius;
   const strokeOffset =
     circumference - (data.adherence.sevenDayPercent / 100) * circumference;
 
-  const latestVital = recentVitals[0];
-  const shareSummaryText = [
-    `Tavya Care Update (${data.todayKey}) — ${data.profile.name} (${data.profile.age})`,
-    `• Today's doses: ${data.adherence.todayTaken}/${data.adherence.todayTotal} (${data.adherence.todayPercent}%) | 7-day: ${data.adherence.sevenDayPercent}%`,
-    latestVital
-      ? `• Latest check-in (${latestVital.mood}): ${latestVital.systolic && latestVital.diastolic ? `BP ${latestVital.systolic}/${latestVital.diastolic} mmHg` : "BP —"}${latestVital.bloodSugarMgDl ? `, Sugar ${latestVital.bloodSugarMgDl} mg/dL` : ""}`
-      : "• No wellness check-in logged today",
-    data.refillAlerts.length > 0
-      ? `• Refills needed: ${data.refillAlerts.map((r) => `${r.medicationName} (${r.pillsRemaining} left)`).join(", ")}`
-      : "• Refills: All stocks healthy",
-  ].join("\n");
+  const shareSummaryText = useMemo(() => {
+    const latestVital = recentVitals[0];
+    return [
+      `Tavya Care Update (${data.todayKey}) — ${data.profile.name} (${data.profile.age})`,
+      `• Today's doses: ${data.adherence.todayTaken}/${data.adherence.todayTotal} (${data.adherence.todayPercent}%) | 7-day: ${data.adherence.sevenDayPercent}%`,
+      vitalsPrivateForFamily
+        ? "• Daily mood & vitals kept private per Senior Sharing Preferences"
+        : latestVital
+          ? `• Latest check-in (${latestVital.mood}): ${latestVital.systolic && latestVital.diastolic ? `BP ${latestVital.systolic}/${latestVital.diastolic} mmHg` : "BP —"}${latestVital.bloodSugarMgDl ? `, Sugar ${latestVital.bloodSugarMgDl} mg/dL` : ""}`
+          : "• No wellness check-in logged today",
+      data.refillAlerts.length > 0
+        ? `• Refills needed: ${data.refillAlerts.map((r) => `${r.medicationName} (${r.pillsRemaining} left)`).join(", ")}`
+        : "• Refills: All stocks healthy",
+    ].join("\n");
+  }, [
+    data.adherence.sevenDayPercent,
+    data.adherence.todayPercent,
+    data.adherence.todayTaken,
+    data.adherence.todayTotal,
+    data.profile.age,
+    data.profile.name,
+    data.refillAlerts,
+    data.todayKey,
+    recentVitals,
+    vitalsPrivateForFamily,
+  ]);
 
   async function handleCopyShare() {
     try {
@@ -171,7 +208,9 @@ export function CaregiverView({
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <span className="inline-flex items-center rounded-full bg-[#E6F3EE] px-3.5 py-1 text-[11px] font-semibold tracking-[0.18em] text-[#0F6B54] uppercase">
-                Caregiver Hub · {data.profile.caregiverName}
+                {data.viewerRole === "family"
+                  ? `Family Hub · ${data.profile.caregiverName}`
+                  : `Caregiver Hub · ${data.profile.caregiverName}`}
               </span>
               <h1
                 id="caregiver-heading"
@@ -180,20 +219,23 @@ export function CaregiverView({
                 {data.profile.name}&apos;s Care Overview
               </h1>
               <p className="mt-2 text-[#46534C]">
-                Live adherence, refill readiness, wellness check-ins, and AI
-                prescription safety screening.
+                {data.viewerRole === "family"
+                  ? "Family read & coordination view for adherence, doctor visits, and shift notes."
+                  : "Live adherence, refill readiness, wellness check-ins, and AI prescription safety screening."}
               </p>
             </div>
 
             <div className="no-print grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-              <button
-                type="button"
-                onClick={() => setProfileModalOpen(true)}
-                className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-[#0F6B54] px-4 py-2 text-xs font-semibold text-white hover:bg-[#0B5341] sm:text-sm"
-              >
-                <UserGear size={18} weight="light" aria-hidden="true" />
-                <span>Edit Profile</span>
-              </button>
+              {isCaretaker ? (
+                <button
+                  type="button"
+                  onClick={() => setProfileModalOpen(true)}
+                  className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-[#0F6B54] px-4 py-2 text-xs font-semibold text-white hover:bg-[#0B5341] sm:text-sm"
+                >
+                  <UserGear size={18} weight="light" aria-hidden="true" />
+                  <span>Edit Profile</span>
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setShareOpen((prev) => !prev)}
@@ -210,26 +252,30 @@ export function CaregiverView({
                 <Printer size={18} weight="light" aria-hidden="true" />
                 <span>Doctor Summary</span>
               </button>
-              <button
-                type="button"
-                onClick={onClearSchedule}
-                className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-[#46534C] ring-1 ring-[#141D19]/12 hover:bg-[#F2EDE3] sm:text-sm"
-              >
-                <Eraser size={18} weight="light" aria-hidden="true" />
-                <span>Start Blank</span>
-              </button>
-              <button
-                type="button"
-                onClick={onResetDemo}
-                className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-[#46534C] ring-1 ring-[#141D19]/12 hover:bg-[#F2EDE3] sm:text-sm"
-              >
-                <ArrowCounterClockwise
-                  size={18}
-                  weight="light"
-                  aria-hidden="true"
-                />
-                <span>Load Sample</span>
-              </button>
+              {isCaretaker ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={onClearSchedule}
+                    className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-[#46534C] ring-1 ring-[#141D19]/12 hover:bg-[#F2EDE3] sm:text-sm"
+                  >
+                    <Eraser size={18} weight="light" aria-hidden="true" />
+                    <span>Start Blank</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onResetDemo}
+                    className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-[#46534C] ring-1 ring-[#141D19]/12 hover:bg-[#F2EDE3] sm:text-sm"
+                  >
+                    <ArrowCounterClockwise
+                      size={18}
+                      weight="light"
+                      aria-hidden="true"
+                    />
+                    <span>Load Sample</span>
+                  </button>
+                </>
+              ) : null}
             </div>
           </div>
 
@@ -365,9 +411,15 @@ export function CaregiverView({
 
               <div className="mt-4 rounded-2xl bg-[#FDFBF7] p-4 ring-1 ring-[#141D19]/[0.07]">
                 <p className="text-xs font-semibold tracking-[0.14em] text-[#46534C] uppercase">
-                  Recent Wellness &amp; Vitals ({data.vitalsLogs.length})
+                  Recent Wellness &amp; Vitals (
+                  {vitalsPrivateForFamily ? "Private" : data.vitalsLogs.length})
                 </p>
-                {recentVitals.length > 0 ? (
+                {vitalsPrivateForFamily ? (
+                  <p className="mt-1.5 text-sm text-[#617068]">
+                    {data.profile.name} has kept daily mood &amp; vitals check-ins
+                    private in Senior Sharing Settings.
+                  </p>
+                ) : recentVitals.length > 0 ? (
                   <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto pr-1">
                     {recentVitals.map((v) => (
                       <li
@@ -465,17 +517,19 @@ export function CaregiverView({
                         left)
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onUpdateMedication(refill.medicationId, {
-                          pillsRemaining: refill.pillsRemaining + 15,
-                        })
-                      }
-                      className="no-print font-mono-num min-h-[36px] rounded-full bg-white px-3 py-1 text-xs font-bold text-[#141D19] ring-1 ring-[#141D19]/10 hover:bg-[#FDFBF7]"
-                    >
-                      +15 Refill
-                    </button>
+                    {isCaretaker ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateMedication(refill.medicationId, {
+                            pillsRemaining: refill.pillsRemaining + 15,
+                          })
+                        }
+                        className="no-print font-mono-num min-h-[36px] rounded-full bg-white px-3 py-1 text-xs font-bold text-[#141D19] ring-1 ring-[#141D19]/10 hover:bg-[#FDFBF7]"
+                      >
+                        +15 Refill
+                      </button>
+                    ) : null}
                   </div>
                 ))}
 
@@ -518,13 +572,15 @@ export function CaregiverView({
         </section>
       </Reveal>
 
-      {/* AI Prescription Simplifier */}
-      <Reveal delayMs={80}>
-        <PrescriptionAnalyzer
-          onAnalyzePrescription={onAnalyzePrescription}
-          onAddParsedItems={onAddParsedItems}
-        />
-      </Reveal>
+      {/* AI Prescription Simplifier (Caretaker Only) */}
+      {isCaretaker ? (
+        <Reveal delayMs={80}>
+          <PrescriptionAnalyzer
+            onAnalyzePrescription={onAnalyzePrescription}
+            onAddParsedItems={onAddParsedItems}
+          />
+        </Reveal>
+      ) : null}
 
       {/* Medication Regimen Manager */}
       <Reveal delayMs={120}>
@@ -539,24 +595,27 @@ export function CaregiverView({
                   Medication Regimen ({data.medications.length})
                 </h2>
                 <p className="text-sm text-[#46534C]">
-                  Add, edit, refill, pause, or log medications for{" "}
-                  {data.profile.name}.
+                  {isCaretaker
+                    ? `Add, edit, refill, pause, or log medications for ${data.profile.name}.`
+                    : `Read-only medication regimen for ${data.profile.name}.`}
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingMed(null);
-                  setMedModalOpen(true);
-                }}
-                className="no-print group inline-flex min-h-[48px] w-full items-center justify-between gap-3 rounded-full bg-[#141D19] py-2 pr-2 pl-5 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#27352E] active:scale-[0.98] sm:w-auto sm:self-start"
-              >
-                <span>Add Medication</span>
-                <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/15">
-                  <Plus size={16} weight="light" aria-hidden="true" />
-                </span>
-              </button>
+              {isCaretaker ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingMed(null);
+                    setMedModalOpen(true);
+                  }}
+                  className="no-print group inline-flex min-h-[48px] w-full items-center justify-between gap-3 rounded-full bg-[#141D19] py-2 pr-2 pl-5 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#27352E] active:scale-[0.98] sm:w-auto sm:self-start"
+                >
+                  <span>Add Medication</span>
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/15">
+                    <Plus size={16} weight="light" aria-hidden="true" />
+                  </span>
+                </button>
+              ) : null}
             </div>
 
             <div className="mt-6 space-y-3">
@@ -611,83 +670,85 @@ export function CaregiverView({
                     </div>
                   </div>
 
-                  <div className="no-print flex flex-wrap items-center gap-2">
-                    {med.active && med.slots[0] ? (
+                  {isCaretaker ? (
+                    <div className="no-print flex flex-wrap items-center gap-2">
+                      {med.active && med.slots[0] ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onDoseAction(med.id, med.slots[0]!, "taken")
+                          }
+                          className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full bg-[#E6F3EE] px-4 py-2 text-xs font-semibold text-[#0F6B54] hover:bg-[#D1EAE0]"
+                        >
+                          <CheckCircle
+                            size={16}
+                            weight="light"
+                            aria-hidden="true"
+                          />
+                          <span>Log {med.slots[0]}</span>
+                        </button>
+                      ) : null}
+
                       <button
                         type="button"
-                        onClick={() =>
-                          onDoseAction(med.id, med.slots[0]!, "taken")
-                        }
-                        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full bg-[#E6F3EE] px-4 py-2 text-xs font-semibold text-[#0F6B54] hover:bg-[#D1EAE0]"
+                        onClick={() => {
+                          setEditingMed(med);
+                          setMedModalOpen(true);
+                        }}
+                        aria-label={`Edit ${med.name}`}
+                        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-[#141D19] ring-1 ring-[#141D19]/12 hover:bg-[#F2EDE3]"
                       >
-                        <CheckCircle
+                        <PencilSimple
                           size={16}
                           weight="light"
                           aria-hidden="true"
                         />
-                        <span>Log {med.slots[0]}</span>
+                        <span>Edit</span>
                       </button>
-                    ) : null}
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingMed(med);
-                        setMedModalOpen(true);
-                      }}
-                      aria-label={`Edit ${med.name}`}
-                      className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-[#141D19] ring-1 ring-[#141D19]/12 hover:bg-[#F2EDE3]"
-                    >
-                      <PencilSimple
-                        size={16}
-                        weight="light"
-                        aria-hidden="true"
-                      />
-                      <span>Edit</span>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onToggleMedicationActive(med.id, !med.active)
+                        }
+                        aria-label={
+                          med.active
+                            ? `Pause ${med.name}`
+                            : `Resume ${med.name}`
+                        }
+                        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-[#46534C] ring-1 ring-[#141D19]/12 hover:bg-[#F2EDE3]"
+                      >
+                        {med.active ? (
+                          <>
+                            <PauseCircle
+                              size={16}
+                              weight="light"
+                              aria-hidden="true"
+                            />
+                            <span>Pause</span>
+                          </>
+                        ) : (
+                          <>
+                            <PlayCircle
+                              size={16}
+                              weight="light"
+                              aria-hidden="true"
+                            />
+                            <span>Resume</span>
+                          </>
+                        )}
+                      </button>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onToggleMedicationActive(med.id, !med.active)
-                      }
-                      aria-label={
-                        med.active
-                          ? `Pause ${med.name}`
-                          : `Resume ${med.name}`
-                      }
-                      className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-[#46534C] ring-1 ring-[#141D19]/12 hover:bg-[#F2EDE3]"
-                    >
-                      {med.active ? (
-                        <>
-                          <PauseCircle
-                            size={16}
-                            weight="light"
-                            aria-hidden="true"
-                          />
-                          <span>Pause</span>
-                        </>
-                      ) : (
-                        <>
-                          <PlayCircle
-                            size={16}
-                            weight="light"
-                            aria-hidden="true"
-                          />
-                          <span>Resume</span>
-                        </>
-                      )}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => onDeleteMedication(med.id)}
-                      aria-label={`Remove ${med.name}`}
-                      className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-white text-[#B42318] ring-1 ring-[#B42318]/20 hover:bg-[#FEE4E2]"
-                    >
-                      <Trash size={16} weight="light" aria-hidden="true" />
-                    </button>
-                  </div>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteMedication(med.id)}
+                        aria-label={`Remove ${med.name}`}
+                        className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-white text-[#B42318] ring-1 ring-[#B42318]/20 hover:bg-[#FEE4E2]"
+                      >
+                        <Trash size={16} weight="light" aria-hidden="true" />
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -847,6 +908,15 @@ export function CaregiverView({
           </section>
         </Reveal>
       ) : null}
+
+      <CareCirclePanels
+        data={data}
+        onCreateAppointment={onCreateAppointment}
+        onDeleteAppointment={onDeleteAppointment}
+        onAddMember={onAddMember}
+        onRemoveMember={onRemoveMember}
+        onRunReminders={onRunReminders}
+      />
 
       {medModalOpen ? (
         <AddMedicationModal

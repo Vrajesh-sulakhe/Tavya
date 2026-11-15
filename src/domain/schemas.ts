@@ -146,7 +146,14 @@ export const restoreStateSchema = z.object({
       z.object({
         id: z.string().trim().min(1).max(80),
         severity: z.enum(["info", "warning", "critical"]),
-        category: z.enum(["refill", "interaction", "wellness", "missed_dose", "sos"]),
+        category: z.enum([
+          "refill",
+          "interaction",
+          "wellness",
+          "missed_dose",
+          "sos",
+          "appointment",
+        ]),
         title: z.string().trim().min(1).max(120),
         detail: z.string().trim().min(1).max(300),
         createdAt: z.string().min(1).max(64),
@@ -169,4 +176,123 @@ export const restoreStateSchema = z.object({
     .max(40)
     .optional()
     .default([]),
+  appointments: z
+    .array(
+      z.object({
+        id: z.string().trim().min(1).max(80),
+        title: z.string().trim().min(1).max(120),
+        doctor: z.string().trim().min(1).max(120),
+        location: z.string().trim().min(1).max(160),
+        startsAt: z
+          .string()
+          .trim()
+          .min(10)
+          .max(64)
+          .refine((val) => !Number.isNaN(Date.parse(val)), "Invalid appointment date."),
+        notes: z.string().trim().max(240).optional(),
+        createdAt: z.string().min(1).max(64),
+      })
+    )
+    .max(50)
+    .optional()
+    .default([]),
+  consent: z
+    .object({
+      shareVitalsWithFamily: z.boolean(),
+      emailFamilyOnMissedDose: z.boolean(),
+    })
+    .optional(),
 });
+
+const passcodeSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4,8}$/, "Passcode must be 4 to 8 digits.");
+
+export const circleRoleSchema = z.enum(["senior", "caretaker", "family"]);
+
+export const setupCircleSchema = z.union([
+  z.object({
+    demo: z.literal(true),
+  }),
+  z.object({
+    demo: z.literal(false).optional(),
+    seniorName: z.string().trim().min(1, "Senior name is required.").max(80),
+    seniorAge: z.number().int().min(18, "Age must be 18 or older.").max(120),
+    allergies: z.array(z.string().trim().min(1).max(60)).max(20).optional().default([]),
+    emergencyContactName: z.string().trim().min(1).max(80),
+    emergencyContactPhone: z
+      .string()
+      .trim()
+      .min(7, "Please enter a valid emergency contact phone.")
+      .max(24),
+    caretakerName: z.string().trim().min(1, "Caretaker name is required.").max(80),
+    caretakerEmail: z
+      .string()
+      .trim()
+      .email("Please enter a valid caretaker email.")
+      .max(120),
+    passcode: passcodeSchema,
+    seniorPasscode: passcodeSchema.optional(),
+  }),
+]);
+
+export const loginPasscodeSchema = z.object({
+  passcode: passcodeSchema,
+});
+
+export const createMemberSchema = z.object({
+  name: z.string().trim().min(1, "Member name is required.").max(80),
+  role: circleRoleSchema,
+  email: z.string().trim().email("Please enter a valid email address.").max(120),
+  passcode: passcodeSchema,
+});
+
+export const removeMemberSchema = z.object({
+  id: z.string().trim().min(1, "Member ID is required.").max(80),
+});
+
+const appointmentStartSchema = z
+  .string()
+  .trim()
+  .min(10, "Please choose an appointment date and time.")
+  .max(64)
+  .refine((val) => !Number.isNaN(Date.parse(val)), "Invalid appointment date and time.");
+
+export const createAppointmentSchema = z.object({
+  title: z.string().trim().min(1, "Appointment reason or title is required.").max(120),
+  doctor: z.string().trim().min(1, "Doctor or clinic name is required.").max(120),
+  location: z.string().trim().min(1, "Location is required.").max(160),
+  startsAt: appointmentStartSchema,
+  notes: z.string().trim().max(240).optional(),
+});
+
+export const updateAppointmentSchema = z
+  .object({
+    title: z.string().trim().min(1).max(120).optional(),
+    doctor: z.string().trim().min(1).max(120).optional(),
+    location: z.string().trim().min(1).max(160).optional(),
+    startsAt: appointmentStartSchema.optional(),
+    notes: z.string().trim().max(240).optional(),
+  })
+  .refine(
+    (value) =>
+      value.title !== undefined ||
+      value.doctor !== undefined ||
+      value.location !== undefined ||
+      value.startsAt !== undefined ||
+      value.notes !== undefined,
+    { message: "At least one appointment field must be updated." }
+  );
+
+export const updateConsentSchema = z
+  .object({
+    shareVitalsWithFamily: z.boolean().optional(),
+    emailFamilyOnMissedDose: z.boolean().optional(),
+  })
+  .refine(
+    (value) =>
+      value.shareVitalsWithFamily !== undefined ||
+      value.emailFamilyOnMissedDose !== undefined,
+    { message: "At least one sharing preference must be provided." }
+  );

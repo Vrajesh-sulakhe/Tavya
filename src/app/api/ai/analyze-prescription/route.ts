@@ -11,7 +11,7 @@ import {
   mealTimingSchema,
 } from "@/domain/schemas";
 import type { PrescriptionAnalysisResult } from "@/domain/types";
-import { parseJsonBody } from "@/lib/api-utils";
+import { getClientIp, parseJsonBody, requireSession } from "@/lib/api-utils";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 const geminiResponseSchema = z.object({
@@ -101,9 +101,10 @@ async function tryGeminiAnalysis(
 }
 
 export async function POST(request: Request) {
-  const clientIp =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
-  const rate = checkRateLimit(`ai:${clientIp}`, 20, 60_000);
+  const auth = await requireSession(request, ["caretaker"]);
+  if (!auth.success) return auth.response;
+
+  const rate = checkRateLimit(`ai:${getClientIp(request)}`, 20, 60_000);
   if (!rate.allowed) {
     return NextResponse.json(
       { error: "Too many analysis requests. Please wait a minute." },

@@ -4,9 +4,11 @@ import {
   Heartbeat,
   PhoneCall,
   Pill,
+  SignOut,
   TextAa,
   UsersThree,
 } from "@phosphor-icons/react";
+import type { CircleRole } from "@/domain/types";
 
 export type AppMode = "senior" | "caregiver";
 export type TextScale = "standard" | "xl";
@@ -18,7 +20,16 @@ interface NavbarProps {
   onToggleTextScale: () => void;
   onOpenSos: () => void;
   patientName: string;
+  viewerRole?: CircleRole;
+  memberName?: string;
+  onLogout?: () => void;
 }
+
+const ROLE_TAG: Record<CircleRole, string> = {
+  senior: "Senior",
+  caretaker: "Caretaker",
+  family: "Family",
+};
 
 export function Navbar({
   mode,
@@ -27,7 +38,12 @@ export function Navbar({
   onToggleTextScale,
   onOpenSos,
   patientName,
+  viewerRole,
+  memberName,
+  onLogout,
 }: NavbarProps) {
+  const showHubSwitcher = viewerRole !== "senior";
+
   return (
     <header className="no-print sticky top-2 z-40 mx-auto w-full max-w-5xl px-3 sm:top-4 sm:px-4">
       <nav
@@ -39,47 +55,58 @@ export function Navbar({
             <Pill size={20} weight="light" aria-hidden="true" />
           </span>
           <div className="min-w-0">
-            <span className="font-display block text-xl leading-none tracking-tight text-[#141D19] sm:text-2xl">
-              Tavya
-            </span>
-            <p className="max-w-[145px] truncate text-[10px] font-medium tracking-[0.06em] text-[#46534C] uppercase sm:max-w-[200px] sm:text-[11px]">
-              {patientName}
+            <div className="flex items-center gap-1.5">
+              <span className="font-display block text-xl leading-none tracking-tight text-[#141D19] sm:text-2xl">
+                Tavya
+              </span>
+              {viewerRole ? (
+                <span className="rounded-full bg-[#E6F3EE] px-2 py-0.5 text-[10px] font-semibold tracking-[0.06em] text-[#0F6B54] uppercase">
+                  {ROLE_TAG[viewerRole]}
+                </span>
+              ) : null}
+            </div>
+            <p className="max-w-[165px] truncate text-[10px] font-medium tracking-[0.06em] text-[#46534C] uppercase sm:max-w-[220px] sm:text-[11px]">
+              {memberName ? `${patientName} · ${memberName}` : patientName}
             </p>
           </div>
         </div>
 
-        <div
-          role="group"
-          aria-label="Switch view mode"
-          className="order-last grid w-full grid-cols-2 items-center rounded-full bg-[#F2EDE3] p-1 ring-1 ring-[#141D19]/[0.06] md:order-none md:flex md:w-auto"
-        >
-          <button
-            type="button"
-            onClick={() => onModeChange("senior")}
-            aria-pressed={mode === "senior"}
-            className={`inline-flex min-h-[44px] items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-xs font-semibold transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] sm:gap-2 sm:px-4 sm:text-sm ${
-              mode === "senior"
-                ? "bg-[#0F6B54] text-white shadow-sm"
-                : "text-[#46534C] hover:text-[#141D19]"
-            }`}
+        {showHubSwitcher ? (
+          <div
+            role="group"
+            aria-label="Switch view mode"
+            className="order-last grid w-full grid-cols-2 items-center rounded-full bg-[#F2EDE3] p-1 ring-1 ring-[#141D19]/[0.06] md:order-none md:flex md:w-auto"
           >
-            <Heartbeat size={18} weight="light" aria-hidden="true" />
-            <span>Senior Day</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onModeChange("caregiver")}
-            aria-pressed={mode === "caregiver"}
-            className={`inline-flex min-h-[44px] items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-xs font-semibold transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] sm:gap-2 sm:px-4 sm:text-sm ${
-              mode === "caregiver"
-                ? "bg-[#141D19] text-white shadow-sm"
-                : "text-[#46534C] hover:text-[#141D19]"
-            }`}
-          >
-            <UsersThree size={18} weight="light" aria-hidden="true" />
-            <span>Caregiver Hub</span>
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() => onModeChange("senior")}
+              aria-pressed={mode === "senior"}
+              className={`inline-flex min-h-[44px] items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-xs font-semibold transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] sm:gap-2 sm:px-4 sm:text-sm ${
+                mode === "senior"
+                  ? "bg-[#0F6B54] text-white shadow-sm"
+                  : "text-[#46534C] hover:text-[#141D19]"
+              }`}
+            >
+              <Heartbeat size={18} weight="light" aria-hidden="true" />
+              <span>Senior Day</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onModeChange("caregiver")}
+              aria-pressed={mode === "caregiver"}
+              className={`inline-flex min-h-[44px] items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-xs font-semibold transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] sm:gap-2 sm:px-4 sm:text-sm ${
+                mode === "caregiver"
+                  ? "bg-[#141D19] text-white shadow-sm"
+                  : "text-[#46534C] hover:text-[#141D19]"
+              }`}
+            >
+              <UsersThree size={18} weight="light" aria-hidden="true" />
+              <span>
+                {viewerRole === "family" ? "Family Hub" : "Caregiver Hub"}
+              </span>
+            </button>
+          </div>
+        ) : null}
 
         <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
           <button
@@ -109,6 +136,18 @@ export function Navbar({
             <PhoneCall size={18} weight="light" aria-hidden="true" />
             <span>SOS</span>
           </button>
+
+          {onLogout ? (
+            <button
+              type="button"
+              onClick={onLogout}
+              aria-label="Sign out of Care Circle"
+              className="inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-full bg-[#FDFBF7] px-3 py-2 text-xs font-semibold text-[#141D19] ring-1 ring-[#141D19]/12 hover:bg-[#F2EDE3] sm:text-sm"
+            >
+              <SignOut size={17} weight="light" aria-hidden="true" />
+              <span className="hidden sm:inline">Sign Out</span>
+            </button>
+          ) : null}
         </div>
       </nav>
     </header>

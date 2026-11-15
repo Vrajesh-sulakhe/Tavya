@@ -1,4 +1,9 @@
 import {
+  createMemberRecord,
+  generateRandomSecret,
+  toPublicMember,
+} from "@/domain/auth";
+import {
   detectAllergyConflicts,
   detectInteractions,
 } from "@/domain/interactions";
@@ -10,11 +15,63 @@ import {
   getRefillAlerts,
 } from "@/domain/schedule";
 import type {
+  Appointment,
+  CareCircle,
+  CircleRole,
   DashboardPayload,
   DoseLog,
   Medication,
+  SharingConsent,
   TavyaStoreData,
 } from "@/domain/types";
+
+export const DEFAULT_CONSENT: SharingConsent = {
+  shareVitalsWithFamily: true,
+  emailFamilyOnMissedDose: true,
+};
+
+export function createBlankCircle(): CareCircle {
+  return {
+    members: [],
+    isDemo: false,
+    sessionSecret: generateRandomSecret(),
+  };
+}
+
+export function createDemoCircle(
+  createdAt: string = new Date().toISOString()
+): CareCircle {
+  return {
+    members: [
+      createMemberRecord({
+        id: "member-senior-1",
+        name: "Lakshmi Devi",
+        role: "senior",
+        email: "lakshmi@tavya-care.demo",
+        passcode: "1111",
+        createdAt,
+      }),
+      createMemberRecord({
+        id: "member-caretaker-1",
+        name: "Ananya Sharma",
+        role: "caretaker",
+        email: "ananya@tavya-care.demo",
+        passcode: "2222",
+        createdAt,
+      }),
+      createMemberRecord({
+        id: "member-family-1",
+        name: "Rohan Sharma",
+        role: "family",
+        email: "rohan@tavya-care.demo",
+        passcode: "3333",
+        createdAt,
+      }),
+    ],
+    isDemo: true,
+    sessionSecret: generateRandomSecret(),
+  };
+}
 
 export function createBlankData(): TavyaStoreData {
   return {
@@ -34,6 +91,10 @@ export function createBlankData(): TavyaStoreData {
     vitalsLogs: [],
     alerts: [],
     careNotes: [],
+    appointments: [],
+    emailLog: [],
+    consent: { ...DEFAULT_CONSENT },
+    circle: createBlankCircle(),
   };
 }
 
@@ -138,6 +199,32 @@ export function createSeedData(
     updatedAt: `${todayKey}T08:15:00.000Z`,
   });
 
+  const tomorrowDate = new Date(`${todayKey}T09:30:00.000Z`);
+  tomorrowDate.setUTCDate(tomorrowDate.getUTCDate() + 1);
+  const nextWeekDate = new Date(`${todayKey}T11:00:00.000Z`);
+  nextWeekDate.setUTCDate(nextWeekDate.getUTCDate() + 4);
+
+  const appointments: Appointment[] = [
+    {
+      id: "appt-seed-1",
+      title: "Cardiology & HbA1c Follow-Up",
+      doctor: "Dr. Arvind Mehta",
+      location: "Apollo Clinic, Pune",
+      startsAt: tomorrowDate.toISOString(),
+      notes: "Bring morning BP log and current medication strip list.",
+      createdAt: `${todayKey}T08:05:00.000Z`,
+    },
+    {
+      id: "appt-seed-2",
+      title: "Physiotherapy & Mobility Check",
+      doctor: "Dr. Kavita Rao",
+      location: "Home Visit",
+      startsAt: nextWeekDate.toISOString(),
+      notes: "Balance assessment and gentle morning walk guidance.",
+      createdAt: `${todayKey}T08:06:00.000Z`,
+    },
+  ];
+
   return {
     profile: {
       name: "Lakshmi Devi",
@@ -188,28 +275,75 @@ export function createSeedData(
         createdAt: `${todayKey}T08:10:00.000Z`,
       },
     ],
+    appointments,
+    emailLog: [],
+    consent: { ...DEFAULT_CONSENT },
+    circle: createDemoCircle(`${todayKey}T08:00:00.000Z`),
   };
+}
+
+export interface BuildPayloadOptions {
+  todayKey?: string;
+  viewerRole?: CircleRole;
+  persistence?: "durable" | "ephemeral";
+  emailDelivery?: "live" | "preview";
 }
 
 export function buildDashboardPayload(
   data: TavyaStoreData,
-  todayKey: string = formatDateKey()
+  optionsOrDateKey: string | BuildPayloadOptions = {}
 ): DashboardPayload {
-  const activeMedNames = data.medications
+  const options: BuildPayloadOptions =
+    typeof optionsOrDateKey === "string"
+      ? { todayKey: optionsOrDateKey }
+      : optionsOrDateKey;
+
+  const todayKey = options.todayKey ?? formatDateKey();
+  const viewerRole: CircleRole = options.viewerRole ?? "caretaker";
+  const persistence = options.persistence ?? "ephemeral";
+  const emailDelivery = options.emailDelivery ?? "preview";
+
+  const {
+    circle,
+    appointments,
+    emailLog,
+    consent,
+    careNotes,
+    vitalsLogs,
+    ...rest
+  } = data;
+
+  const resolvedConsent: SharingConsent = consent ?? { ...DEFAULT_CONSENT };
+  const redactVitals =
+    viewerRole === "family" && !resolvedConsent.shareVitalsWithFamily;
+
+  const activeMedNames = rest.medications
     .filter((m) => m.active)
     .map((m) => m.name);
 
+  const sortedAppointments = [...(appointments ?? [])].sort((a, b) =>
+    a.startsAt.localeCompare(b.startsAt)
+  );
+
   return {
-    ...data,
-    careNotes: data.careNotes ?? [],
+    ...rest,
+    vitalsLogs: redactVitals ? [] : vitalsLogs,
+    careNotes: careNotes ?? [],
+    appointments: sortedAppointments,
+    emailLog: emailLog ?? [],
+    consent: resolvedConsent,
+    members: (circle?.members ?? []).map(toPublicMember),
+    viewerRole,
+    persistence,
+    emailDelivery,
     todayKey,
-    adherence: calculateAdherenceStats(data.medications, data.doseLogs, todayKey),
-    refillAlerts: getRefillAlerts(data.medications),
+    adherence: calculateAdherenceStats(rest.medications, rest.doseLogs, todayKey),
+    refillAlerts: getRefillAlerts(rest.medications),
     interactions: detectInteractions(activeMedNames),
     allergyConflicts: detectAllergyConflicts(
       activeMedNames,
-      data.profile.allergies
+      rest.profile.allergies
     ),
-    weeklyMatrix: buildWeeklyMatrix(data.medications, data.doseLogs, todayKey),
+    weeklyMatrix: buildWeeklyMatrix(rest.medications, rest.doseLogs, todayKey),
   };
 }

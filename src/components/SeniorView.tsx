@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+} from "react";
 import {
   ArrowCounterClockwise,
   ArrowUpRight,
@@ -11,6 +17,7 @@ import {
   FirstAidKit,
   Heartbeat,
   MoonStars,
+  ShieldCheck,
   SpeakerHigh,
   Sun,
   SunHorizon,
@@ -32,6 +39,7 @@ import type {
   DoseSlot,
   DoseStatus,
   MoodState,
+  SharingConsent,
 } from "@/domain/types";
 import type { TextScale } from "./Navbar";
 import { BezelCard } from "./ui/BezelCard";
@@ -53,6 +61,7 @@ interface SeniorViewProps {
     bloodSugarMgDl?: number;
     note?: string;
   }) => Promise<void>;
+  onUpdateConsent?: (next: Partial<SharingConsent>) => Promise<void>;
   onOpenCaregiver: () => void;
   onOpenSos: () => void;
 }
@@ -82,6 +91,7 @@ export function SeniorView({
   textScale,
   onDoseAction,
   onLogVitals,
+  onUpdateConsent,
   onOpenCaregiver,
   onOpenSos,
 }: SeniorViewProps) {
@@ -158,21 +168,53 @@ export function SeniorView({
     return () => window.clearInterval(timer);
   }, [snoozedUntil, data.medications]);
 
-  const grouped = groupMedicationsBySlot(
-    data.medications,
-    data.doseLogs,
-    data.todayKey
+  const grouped = useMemo(
+    () =>
+      groupMedicationsBySlot(data.medications, data.doseLogs, data.todayKey),
+    [data.medications, data.doseLogs, data.todayKey]
   );
-  const nextDue = getNextDueMedication(
-    data.medications,
-    data.doseLogs,
-    data.todayKey,
-    localHour
+
+  const nextDue = useMemo(
+    () =>
+      getNextDueMedication(
+        data.medications,
+        data.doseLogs,
+        data.todayKey,
+        localHour
+      ),
+    [data.medications, data.doseLogs, data.todayKey, localHour]
   );
-  const hasActiveMeds = data.medications.some((m) => m.active);
-  const nextAppointment = (data.careNotes ?? []).find(
-    (note) => note.category === "appointment"
+
+  const hasActiveMeds = useMemo(
+    () => data.medications.some((m) => m.active),
+    [data.medications]
   );
+
+  const nextVisitSummary = useMemo(() => {
+    const structured = (data.appointments ?? [])[0];
+    if (structured) {
+      const formatted = new Date(structured.startsAt).toLocaleString("en-IN", {
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+      return {
+        dateLabel: formatted,
+        detail: [structured.title, structured.doctor, structured.location]
+          .filter(Boolean)
+          .join(" · "),
+      };
+    }
+    const noteVisit = (data.careNotes ?? []).find(
+      (note) => note.category === "appointment"
+    );
+    if (noteVisit) {
+      return {
+        dateLabel: noteVisit.scheduledDate ?? "",
+        detail: noteVisit.text,
+      };
+    }
+    return null;
+  }, [data.appointments, data.careNotes]);
   const isPlaceholderProfile =
     data.profile.name.trim().toLowerCase() === "your loved one";
   const firstName = isPlaceholderProfile
@@ -365,7 +407,7 @@ export function SeniorView({
             </div>
           ) : null}
 
-          {nextAppointment ? (
+          {nextVisitSummary ? (
             <div className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 text-sm text-[#141D19] ring-1 ring-[#141D19]/10">
               <CalendarCheck
                 size={20}
@@ -376,12 +418,12 @@ export function SeniorView({
               <div>
                 <span className="font-semibold text-[#0F6B54]">
                   {t.nextVisitLabel}
-                  {nextAppointment.scheduledDate
-                    ? ` · ${nextAppointment.scheduledDate}`
+                  {nextVisitSummary.dateLabel
+                    ? ` · ${nextVisitSummary.dateLabel}`
                     : ""}
                   :{" "}
                 </span>
-                <span>{nextAppointment.text}</span>
+                <span>{nextVisitSummary.detail}</span>
               </div>
             </div>
           ) : null}
@@ -404,16 +446,18 @@ export function SeniorView({
                   </h2>
                   <p className="mt-1 text-[#46534C]">{t.emptyHeroBody}</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={onOpenCaregiver}
-                  className="group inline-flex min-h-[52px] w-full shrink-0 items-center justify-between gap-3 rounded-full bg-[#0F6B54] py-2 pr-2 pl-6 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#0B5341] active:scale-[0.98] sm:w-auto"
-                >
-                  <span>{t.openCaregiverHub}</span>
-                  <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5 group-hover:-translate-y-0.5">
-                    <ArrowUpRight size={18} weight="light" aria-hidden="true" />
-                  </span>
-                </button>
+                {data.viewerRole !== "senior" ? (
+                  <button
+                    type="button"
+                    onClick={onOpenCaregiver}
+                    className="group inline-flex min-h-[52px] w-full shrink-0 items-center justify-between gap-3 rounded-full bg-[#0F6B54] py-2 pr-2 pl-6 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-[#0B5341] active:scale-[0.98] sm:w-auto"
+                  >
+                    <span>{t.openCaregiverHub}</span>
+                    <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5 group-hover:-translate-y-0.5">
+                      <ArrowUpRight size={18} weight="light" aria-hidden="true" />
+                    </span>
+                  </button>
+                ) : null}
               </div>
             ) : nextDue ? (
               <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-center lg:gap-6">
@@ -839,6 +883,103 @@ export function SeniorView({
           </BezelCard>
         </section>
       </Reveal>
+
+      {onUpdateConsent &&
+      (data.viewerRole === "senior" || data.viewerRole === "caretaker") ? (
+        <Reveal delayMs={180}>
+          <section aria-labelledby="senior-privacy-heading">
+            <BezelCard innerClassName="p-6 sm:p-8">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#E6F3EE] text-[#0F6B54]">
+                    <ShieldCheck size={22} weight="light" aria-hidden="true" />
+                  </span>
+                  <div>
+                    <h2
+                      id="senior-privacy-heading"
+                      className="font-display text-2xl text-[#141D19] sm:text-3xl"
+                    >
+                      My Sharing &amp; Privacy Choices
+                    </h2>
+                    <p className="mt-1 text-sm text-[#46534C]">
+                      Stay in control of what extended family members can view
+                      and when automatic missed-dose email alerts go out.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={data.consent.shareVitalsWithFamily}
+                  onClick={() =>
+                    void onUpdateConsent({
+                      shareVitalsWithFamily:
+                        !data.consent.shareVitalsWithFamily,
+                    })
+                  }
+                  className="flex min-h-[58px] items-center justify-between gap-4 rounded-2xl bg-[#FDFBF7] px-4 py-3 text-left ring-1 ring-[#141D19]/10 hover:bg-[#F2EDE3]"
+                >
+                  <div>
+                    <span className="block text-sm font-semibold text-[#141D19]">
+                      Share daily mood &amp; vitals with family
+                    </span>
+                    <span className="text-xs text-[#46534C]">
+                      {data.consent.shareVitalsWithFamily
+                        ? "Currently visible in Family Hub"
+                        : "Kept private to you & primary caretaker"}
+                    </span>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${
+                      data.consent.shareVitalsWithFamily
+                        ? "bg-[#0F6B54] text-white"
+                        : "bg-[#E5E7EB] text-[#374151]"
+                    }`}
+                  >
+                    {data.consent.shareVitalsWithFamily ? "Shared" : "Private"}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={data.consent.emailFamilyOnMissedDose}
+                  onClick={() =>
+                    void onUpdateConsent({
+                      emailFamilyOnMissedDose:
+                        !data.consent.emailFamilyOnMissedDose,
+                    })
+                  }
+                  className="flex min-h-[58px] items-center justify-between gap-4 rounded-2xl bg-[#FDFBF7] px-4 py-3 text-left ring-1 ring-[#141D19]/10 hover:bg-[#F2EDE3]"
+                >
+                  <div>
+                    <span className="block text-sm font-semibold text-[#141D19]">
+                      Notify family by email if a dose is missed
+                    </span>
+                    <span className="text-xs text-[#46534C]">
+                      {data.consent.emailFamilyOnMissedDose
+                        ? "Automatic family check-in alerts active"
+                        : "Primary caretaker notified only"}
+                    </span>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${
+                      data.consent.emailFamilyOnMissedDose
+                        ? "bg-[#0F6B54] text-white"
+                        : "bg-[#E5E7EB] text-[#374151]"
+                    }`}
+                  >
+                    {data.consent.emailFamilyOnMissedDose ? "Active" : "Paused"}
+                  </span>
+                </button>
+              </div>
+            </BezelCard>
+          </section>
+        </Reveal>
+      ) : null}
     </div>
   );
 }
