@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   CareNoteCategory,
   DashboardPayload,
@@ -53,12 +53,13 @@ export function TavyaApp({ initialData }: TavyaAppProps) {
   const [textScale, setTextScale] = useState<TextScale>("standard");
   const [sosOpen, setSosOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
+  const hasLocalMutationRef = useRef(false);
 
   useEffect(() => {
     document.documentElement.dataset.textScale = textScale;
   }, [textScale]);
 
-  // Hydrate browser-persisted user data across serverless cold starts
+  // Restore browser-saved data on mount so serverless cold starts preserve user schedules.
   useEffect(() => {
     let active = true;
     async function syncSavedState() {
@@ -71,7 +72,7 @@ export function TavyaApp({ initialData }: TavyaAppProps) {
           headers: { "content-type": "application/json" },
           body: JSON.stringify(parsed),
         });
-        if (res.ok && active) {
+        if (res.ok && active && !hasLocalMutationRef.current) {
           const synced = (await res.json()) as DashboardPayload;
           setData(synced);
         }
@@ -86,6 +87,7 @@ export function TavyaApp({ initialData }: TavyaAppProps) {
   }, []);
 
   function applyDashboardUpdate(next: DashboardPayload, message: string) {
+    hasLocalMutationRef.current = true;
     setData(next);
     saveToBrowserStorage(next);
     setAnnouncement(message);
@@ -252,6 +254,7 @@ export function TavyaApp({ initialData }: TavyaAppProps) {
 
   async function handleAddParsedItems(items: ParsedPrescriptionItem[]) {
     let latest = data;
+    let addedCount = 0;
     for (const item of items) {
       const res = await fetch("/api/medications", {
         method: "POST",
@@ -271,12 +274,15 @@ export function TavyaApp({ initialData }: TavyaAppProps) {
       if (res.ok) {
         const json = (await res.json()) as { dashboard: DashboardPayload };
         latest = json.dashboard;
+        addedCount += 1;
       }
     }
-    applyDashboardUpdate(
-      latest,
-      `Added ${items.length} medicines from prescription.`
-    );
+    if (addedCount > 0) {
+      applyDashboardUpdate(
+        latest,
+        `Added ${addedCount} medicine${addedCount === 1 ? "" : "s"} from prescription.`
+      );
+    }
   }
 
   async function handleResetDemo() {

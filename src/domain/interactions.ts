@@ -101,6 +101,10 @@ function matchesAny(haystack: string, keywords: readonly string[]): boolean {
   return keywords.some((kw) => haystack.includes(kw));
 }
 
+/**
+ * Screens active medication names against known drug-drug and drug-food rules.
+ * Major warnings are sorted ahead of cautions.
+ */
 export function detectInteractions(
   medicationNames: readonly string[]
 ): InteractionWarning[] {
@@ -191,6 +195,10 @@ const ALLERGY_CLASS_MAP: ReadonlyArray<{
   },
 ];
 
+/**
+ * Cross-screens scheduled medications against reported patient allergies using both
+ * pharmacological drug-class mappings and direct substring matching.
+ */
 export function detectAllergyConflicts(
   medicationNames: readonly string[],
   allergies: readonly string[]

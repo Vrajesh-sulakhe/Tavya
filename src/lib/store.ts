@@ -48,6 +48,10 @@ export function readStore(): TavyaStoreData {
   return initial;
 }
 
+/**
+ * Persists store state in memory and atomically writes JSON to disk via temp-file rename
+ * to prevent partial reads. Silently keeps in-memory state if the filesystem is read-only.
+ */
 export function writeStore(data: TavyaStoreData): void {
   const currentDir = resolveDataDir();
   memoryDataDir = currentDir;
@@ -80,6 +84,9 @@ export function clearStore(): TavyaStoreData {
   return cleared;
 }
 
+/**
+ * Applies an immutable state transition over a deep clone of the current store.
+ */
 export function mutateStore(
   updater: (draft: TavyaStoreData) => TavyaStoreData
 ): TavyaStoreData {

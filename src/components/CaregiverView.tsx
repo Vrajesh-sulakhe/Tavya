@@ -107,7 +107,7 @@ export function CaregiverView({
   const [noteDate, setNoteDate] = useState("");
   const [savingNote, setSavingNote] = useState(false);
 
-  const recentVitals = data.vitalsLogs.slice(0, 6);
+  const recentVitals = data.vitalsLogs.slice(0, 20);
   const radius = 38;
   const circumference = 2 * Math.PI * radius;
   const strokeOffset =

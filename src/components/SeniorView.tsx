@@ -88,15 +88,9 @@ export function SeniorView({
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [lang, setLang] = useState<SeniorLanguage>("en");
   const [speechStatus, setSpeechStatus] = useState<string>("");
-  const [reminderState, setReminderState] = useState<
-    "idle" | "granted" | "denied"
-  >(() =>
-    typeof window !== "undefined" &&
-    "Notification" in window &&
-    Notification.permission === "granted"
-      ? "granted"
-      : "idle"
-  );
+  const [reminderOverride, setReminderOverride] = useState<
+    "idle" | "granted" | "denied" | null
+  >(null);
   const [snoozedUntil, setSnoozedUntil] = useState<Record<string, number>>({});
   const [dueReminderBanner, setDueReminderBanner] = useState<string>("");
   const [selectedMood, setSelectedMood] = useState<MoodState>("good");
@@ -107,11 +101,25 @@ export function SeniorView({
 
   const t = SENIOR_LANGUAGES[lang];
 
+  // Use useSyncExternalStore with fixed server snapshots to avoid SSR/client hydration mismatches.
   const localHour = useSyncExternalStore(
     () => () => {},
     () => new Date().getHours(),
     () => 12
   );
+  const browserNotificationState = useSyncExternalStore<"idle" | "granted" | "denied">(
+    () => () => {},
+    () => {
+      if (typeof window === "undefined" || !("Notification" in window)) {
+        return "idle";
+      }
+      if (Notification.permission === "granted") return "granted";
+      if (Notification.permission === "denied") return "denied";
+      return "idle";
+    },
+    () => "idle"
+  );
+  const reminderState = reminderOverride ?? browserNotificationState;
 
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
@@ -176,11 +184,11 @@ export function SeniorView({
 
   async function handleEnableReminders() {
     if (typeof window === "undefined" || !("Notification" in window)) {
-      setReminderState("denied");
+      setReminderOverride("denied");
       return;
     }
     const perm = await Notification.requestPermission();
-    setReminderState(perm === "granted" ? "granted" : "denied");
+    setReminderOverride(perm === "granted" ? "granted" : "denied");
   }
 
   async function handleDoseClick(

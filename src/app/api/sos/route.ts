@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { sosAlertSchema } from "@/domain/schemas";
 import { formatDateKey } from "@/domain/schedule";
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
             : "SOS card";
 
     const alert = {
-      id: `sos-${crypto.randomUUID().slice(0, 8)}`,
+      id: `sos-${randomUUID().slice(0, 8)}`,
       severity: "critical" as const,
       category: "sos" as const,
       title: `Emergency SOS triggered (${channelLabel})`,

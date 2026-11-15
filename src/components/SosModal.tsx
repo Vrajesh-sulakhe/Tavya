@@ -19,6 +19,10 @@ interface SosModalProps {
   ) => Promise<void> | void;
 }
 
+function sanitizePhoneForHref(phone: string): string {
+  return phone.replace(/[^\d+]/g, "");
+}
+
 export function SosModal({
   open,
   onClose,
@@ -44,6 +48,8 @@ export function SosModal({
   if (!open) return null;
 
   const activeMeds = medications.filter((m) => m.active);
+  const caregiverHrefPhone = sanitizePhoneForHref(profile.caregiverPhone);
+  const doctorHrefPhone = sanitizePhoneForHref(profile.doctorPhone);
   const cleanCaregiverDigits = profile.caregiverPhone.replace(/[^\d]/g, "");
   const emergencyText = [
     `URGENT from ${profile.name} (${profile.age} yrs) via Tavya:`,
@@ -93,10 +99,10 @@ export function SosModal({
           </div>
 
           <div className="mt-6 space-y-3">
-            {profile.caregiverPhone.trim() ? (
+            {caregiverHrefPhone ? (
               <div className="space-y-2">
                 <a
-                  href={`tel:${profile.caregiverPhone.replace(/\s+/g, "")}`}
+                  href={`tel:${caregiverHrefPhone}`}
                   onClick={() => {
                     void onTriggerSos?.("call");
                   }}
@@ -116,24 +122,26 @@ export function SosModal({
                 </a>
 
                 <div className="grid grid-cols-2 gap-2">
+                  {cleanCaregiverDigits ? (
+                    <a
+                      href={`https://wa.me/${cleanCaregiverDigits}?text=${encodeURIComponent(emergencyText)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => {
+                        void onTriggerSos?.("whatsapp");
+                      }}
+                      className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-[#E6F3EE] px-4 py-2 text-xs font-semibold text-[#0F6B54] hover:bg-[#D1EAE0]"
+                    >
+                      <ChatCircleText size={16} weight="light" aria-hidden="true" />
+                      <span>WhatsApp Alert</span>
+                    </a>
+                  ) : null}
                   <a
-                    href={`https://wa.me/${cleanCaregiverDigits}?text=${encodeURIComponent(emergencyText)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => {
-                      void onTriggerSos?.("whatsapp");
-                    }}
-                    className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-[#E6F3EE] px-4 py-2 text-xs font-semibold text-[#0F6B54] hover:bg-[#D1EAE0]"
-                  >
-                    <ChatCircleText size={16} weight="light" aria-hidden="true" />
-                    <span>WhatsApp Alert</span>
-                  </a>
-                  <a
-                    href={`sms:${profile.caregiverPhone.replace(/\s+/g, "")}?&body=${encodeURIComponent(emergencyText)}`}
+                    href={`sms:${caregiverHrefPhone}?body=${encodeURIComponent(emergencyText)}`}
                     onClick={() => {
                       void onTriggerSos?.("sms");
                     }}
-                    className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-[#FDFBF7] px-4 py-2 text-xs font-semibold text-[#141D19] ring-1 ring-[#141D19]/12 hover:bg-[#F2EDE3]"
+                    className={`inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-[#FDFBF7] px-4 py-2 text-xs font-semibold text-[#141D19] ring-1 ring-[#141D19]/12 hover:bg-[#F2EDE3] ${cleanCaregiverDigits ? "" : "col-span-2"}`}
                   >
                     <ChatCircleText size={16} weight="light" aria-hidden="true" />
                     <span>Send SMS Alert</span>
@@ -151,9 +159,9 @@ export function SosModal({
               </div>
             )}
 
-            {profile.doctorPhone.trim() ? (
+            {doctorHrefPhone ? (
               <a
-                href={`tel:${profile.doctorPhone.replace(/\s+/g, "")}`}
+                href={`tel:${doctorHrefPhone}`}
                 className="flex min-h-[52px] w-full items-center justify-between rounded-full bg-[#FDFBF7] px-6 py-3 text-[#141D19] ring-1 ring-[#141D19]/12 transition-colors hover:bg-[#F2EDE3]"
               >
                 <span>

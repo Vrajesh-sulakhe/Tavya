@@ -78,6 +78,9 @@ export function PrescriptionAnalyzer({
         });
       }
     };
+    reader.onerror = () => {
+      setError("Could not read the selected image file.");
+    };
     reader.readAsDataURL(file);
   }
 

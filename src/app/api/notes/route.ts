@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createCareNoteSchema } from "@/domain/schemas";
 import { formatDateKey } from "@/domain/schedule";
@@ -11,7 +12,7 @@ export async function POST(request: Request) {
   if (!parsed.success) return parsed.response;
 
   const entry: CareNote = {
-    id: `note-${crypto.randomUUID().slice(0, 8)}`,
+    id: `note-${randomUUID().slice(0, 8)}`,
     category: parsed.data.category,
     text: parsed.data.text,
     scheduledDate: parsed.data.scheduledDate,

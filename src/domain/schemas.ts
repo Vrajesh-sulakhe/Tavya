@@ -72,6 +72,12 @@ export const analyzePrescriptionSchema = z
     imageMimeType: z.enum(["image/jpeg", "image/png", "image/webp"]).optional(),
   })
   .refine(
+    (data) => Boolean(data.imageBase64) === Boolean(data.imageMimeType),
+    {
+      message: "Both imageBase64 and imageMimeType must be provided together",
+    }
+  )
+  .refine(
     (data) => data.text.trim().length >= 5 || Boolean(data.imageBase64),
     {
       message:

@@ -298,7 +298,14 @@ describe("Tavya API routes", () => {
     expect(data.alerts[0]?.severity).toBe("critical");
   });
 
-  it("POST /api/ai/analyze-prescription returns 400 for image-only without GEMINI_API_KEY", async () => {
+  it("POST /api/ai/analyze-prescription returns 400 for image-only without GEMINI_API_KEY and rejects incomplete image fields", async () => {
+    const mismatchRes = await analyzePrescription(
+      jsonRequest("http://localhost/api/ai/analyze-prescription", "POST", {
+        imageBase64: "dGVzdA==",
+      })
+    );
+    expect(mismatchRes.status).toBe(400);
+
     const res = await analyzePrescription(
       jsonRequest("http://localhost/api/ai/analyze-prescription", "POST", {
         imageBase64: "dGVzdA==",
